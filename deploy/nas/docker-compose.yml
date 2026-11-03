@@ -1,0 +1,210 @@
+# Poker Night na NAS — verejne cez Tailscale Funnel, bez jediného otvoreného portu na NAS ani na routeri.
+# Hra beží v izolovanom kontajneri: bez root práv, len na čítanie, bez prístupu na internet či do LAN,
+# vidí len vlastný volume s dátami stolov. Von ju púšťa len sidecar „tailscale“ (vlastný uzol v tailnete).
+name: poker-night
+
+services:
+  poker:
+    build: ../..
+    image: poker-night:latest
+    container_name: poker-night
+    restart: unless-stopped
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 768m
+    cpus: 1.0
+    pids_limit: 128
+    environment:
+      NODE_ENV: production
+      # Heap pod limitom kontajnera (768 MB) — zvyšok pre kompresiu WebSocketov (zlib mimo heapu) a buffre
+      NODE_OPTIONS: "--max-old-space-size=448"
+      PORT: "3000"
+      HTTPS_PORT: "0"
+      # Tailscale Funnel nastaví X-Forwarded-For na IP hráča; hra je dostupná len cez sidecar, hlavičke sa dá veriť
+      TRUST_PROXY: "xff"
+      # TURN relay pre kamery (keď priame spojenie cez NAT zlyhá) — hodnoty z .env na NAS, vytvorí ich deploy.sh
+      TURN_URLS: "${TURN_URLS:-}"
+      TURN_SECRET: "${TURN_SECRET:-}"
+      # Relay Cloudflare (UDP) — prihlasovacie údaje zapisuje sidecar turn-creds; bez nich ostáva coturn vyššie
+      TURN_ICE_FILE: /app/turn-creds/ice.json
+      # Spotreba Cloudflare TURN pre /stats (zapisuje ten istý sidecar každých 15 min)
+      TURN_USAGE_FILE: /app/turn-creds/usage.json
+      # Kľúč k stránke /stats (sieťové štatistiky) — vytvorí ho deploy.sh
+      STATS_TOKEN: "${STATS_TOKEN:-}"
+    volumes:
+      - poker-data:/app/data
+      - turn-creds:/app/turn-creds:ro
+    networks: [poker-internal]
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  # TURN relay pre video: klienti sa pripájajú cez Funnel (TLS na :8443 ukončí Tailscale) a relay smie posielať dáta
+  # LEN na vlastnú relay adresu (oba konce cez TURN) — nedá sa ním dostať na internet ani do domácej siete.
+  turn:
+    image: coturn/coturn:4.6.2
+    container_name: poker-turn
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m,mode=1777
+      - /var/lib/coturn:size=8m,mode=1777
+    cap_drop: [ALL]
+    # binárka turnserver má súborovú capability NET_BIND_SERVICE — bez nej v bounding sete sa nespustí (port 3478 ju nepotrebuje)
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    cpus: 1.0
+    pids_limit: 64
+    command:
+      - -n
+      - --log-file=stdout
+      - --pidfile=/tmp/turnserver.pid
+      - --listening-ip=10.213.0.10
+      - --relay-ip=10.213.0.10
+      - --listening-port=3478
+      - --min-port=49160
+      - --max-port=50400
+      - --no-udp
+      - --no-tls
+      - --no-dtls
+      - --no-cli
+      - --fingerprint
+      - --use-auth-secret
+      - --static-auth-secret=${TURN_SECRET:?TURN_SECRET chýba v .env}
+      - --realm=poker-night
+      - --no-multicast-peers
+      - --denied-peer-ip=0.0.0.0-255.255.255.255
+      - --allowed-peer-ip=10.213.0.10
+      - --user-quota=24
+      - --total-quota=1200
+      - --max-bps=300000
+      - --no-software-attribute
+    networks:
+      poker-internal:
+        ipv4_address: 10.213.0.10
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  # Prihlasovacie údaje k Cloudflare TURN (relay po UDP — nesekne pri strate paketu ako TCP cez Funnel).
+  # Hra nemá prístup na internet, tak ich každú hodinu vypýta tento malý kontajner a zapíše do zdieľaného volume.
+  # Kľúč CF_TURN_KEY_ID a CF_TURN_API_TOKEN (Cloudflare → Realtime → TURN) sú len v deploy/nas/.env na NAS.
+  turn-creds:
+    image: curlimages/curl:8.11.1
+    container_name: poker-turn-creds
+    restart: unless-stopped
+    # root bez capabilities: zapisuje len do vlastného volume (patrí rootovi), hra ho má len na čítanie
+    user: "0:0"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 32m
+    pids_limit: 16
+    environment:
+      CF_TURN_KEY_ID: "${CF_TURN_KEY_ID:-}"
+      CF_TURN_API_TOKEN: "${CF_TURN_API_TOKEN:-}"
+      # Voliteľné: spotreba z Cloudflare Analytics pre /stats (API token s oprávnením Account → Account Analytics → Read)
+      CF_ACCOUNT_ID: "${CF_ACCOUNT_ID:-}"
+      CF_ANALYTICS_TOKEN: "${CF_ANALYTICS_TOKEN:-}"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ -z "$$CF_TURN_KEY_ID" ] || [ -z "$$CF_TURN_API_TOKEN" ]; then
+          echo "Cloudflare TURN nie je nastavený (CF_TURN_KEY_ID, CF_TURN_API_TOKEN) — hra použije coturn"
+          rm -f /creds/ice.json /creds/usage.json
+          while true; do sleep 86400; done
+        fi
+        # Spotreba v aktuálnom mesiaci (UTC): celý účet (free tier 1 000 GB je spoločný) a len kľúč hry, plus dnešok
+        usage() {
+          if [ -z "$$CF_ACCOUNT_ID" ] || [ -z "$$CF_ANALYTICS_TOKEN" ]; then
+            printf '{"configured":false}' > /creds/usage.tmp && mv /creds/usage.tmp /creds/usage.json
+            return
+          fi
+          MONTH=$$(date -u +%Y-%m); FROM="$$MONTH-01"; TODAY=$$(date -u +%Y-%m-%d)
+          SUM='{sum{egressBytes ingressBytes}}'
+          Q=$$(printf '{"query":"{viewer{accounts(filter:{accountTag:\\"%s\\"}){monthAll:callsTurnUsageAdaptiveGroups(limit:10,filter:{date_geq:\\"%s\\",date_leq:\\"%s\\"})%s monthKey:callsTurnUsageAdaptiveGroups(limit:10,filter:{date_geq:\\"%s\\",date_leq:\\"%s\\",keyId:\\"%s\\"})%s todayKey:callsTurnUsageAdaptiveGroups(limit:10,filter:{date_geq:\\"%s\\",date_leq:\\"%s\\",keyId:\\"%s\\"})%s}}}"}' \
+            "$$CF_ACCOUNT_ID" "$$FROM" "$$TODAY" "$$SUM" "$$FROM" "$$TODAY" "$$CF_TURN_KEY_ID" "$$SUM" "$$TODAY" "$$TODAY" "$$CF_TURN_KEY_ID" "$$SUM")
+          if curl -sS --max-time 20 -X POST -H "Authorization: Bearer $$CF_ANALYTICS_TOKEN" -H "Content-Type: application/json" \
+            -d "$$Q" https://api.cloudflare.com/client/v4/graphql -o /creds/usage-response.tmp \
+            && [ "$$(head -c 1 /creds/usage-response.tmp)" = "{" ]; then
+            { printf '{"configured":true,"month":"%s","response":' "$$MONTH"; cat /creds/usage-response.tmp; printf '}'; } > /creds/usage.tmp
+            mv /creds/usage.tmp /creds/usage.json
+          else
+            echo "Cloudflare spotreba: nepodarilo sa stiahnuť, skúsim neskôr"
+          fi
+          rm -f /creds/usage-response.tmp
+        }
+        NEXT_CREDS=0; NEXT_USAGE=0
+        while true; do
+          NOW=$$(date +%s)
+          if [ "$$NOW" -ge "$$NEXT_CREDS" ]; then
+            if curl -fsS --max-time 20 -X POST \
+              -H "Authorization: Bearer $$CF_TURN_API_TOKEN" -H "Content-Type: application/json" -d '{"ttl": 86400}' \
+              "https://rtc.live.cloudflare.com/v1/turn/keys/$$CF_TURN_KEY_ID/credentials/generate-ice-servers" -o /creds/ice.tmp \
+              && grep -q '"iceServers"' /creds/ice.tmp; then
+              mv /creds/ice.tmp /creds/ice.json
+              echo "Cloudflare TURN: nové prihlasovacie údaje (platia 24 h)"
+              NEXT_CREDS=$$((NOW + 3600))
+            else
+              echo "Cloudflare TURN: údaje sa nepodarilo získať, skúsim o minútu"
+              rm -f /creds/ice.tmp
+              NEXT_CREDS=$$((NOW + 60))
+            fi
+          fi
+          if [ "$$NOW" -ge "$$NEXT_USAGE" ]; then
+            usage
+            NEXT_USAGE=$$((NOW + 900))
+          fi
+          sleep 60
+        done
+    volumes:
+      - turn-creds:/creds
+    networks: [egress]
+    logging:
+      driver: json-file
+      options: { max-size: "1m", max-file: "2" }
+
+  tailscale:
+    # „stable“ = aktuálna stabilná verzia (bezpečnostné opravy); pri nasadení sa stiahne nová
+    image: tailscale/tailscale:stable
+    container_name: poker-tailscale
+    # hostname sidecaru NESMIE byť „poker“ — v /etc/hosts by zatienil kontajner hry; proxy ide na poker-night
+    hostname: poker-tailscale
+    restart: unless-stopped
+    depends_on: [poker, turn]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    pids_limit: 128
+    environment:
+      TS_AUTHKEY: "${TS_AUTHKEY:-}"
+      TS_HOSTNAME: "poker"
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "true"
+      TS_SERVE_CONFIG: /config/serve.json
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - ./serve.json:/config/serve.json:ro
+    networks: [poker-internal, egress]
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+networks:
+  # Bez brány von — kontajner hry sa nedostane na internet ani do domácej siete
+  poker-internal:
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.213.0.0/24
+  egress: {}
+
+volumes:
+  poker-data:
+  tailscale-state:
+  turn-creds:

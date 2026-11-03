@@ -1,0 +1,195 @@
+.sound-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.sound-toggle {
+  align-items: flex-start;
+  padding: 8px 12px;
+  border-radius: 8px;
+}
+
+.sound-toggle:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.sound-toggle input {
+  flex: none;
+  margin: 2px 0 0;
+}
+
+.sound-toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sound-toggle-text .hint {
+  font-size: 0.78rem;
+  line-height: 1.3;
+}
+
+/* ===== Nastavenia zvuku (popover z hornej lišty) ===== */
+.sound-button-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.sound-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 60;
+  width: min(320px, calc(100vw - 24px));
+  background: var(--panel-solid, #121a16);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  padding: 8px;
+}
+
+.sound-popover-title {
+  font-weight: 800;
+  color: var(--gold);
+  padding: 6px 12px 2px;
+}
+
+.sound-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sound-slider {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+}
+
+.sound-slider-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.9rem;
+}
+
+.sound-slider-value {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.sound-slider input[type='range'] {
+  width: 100%;
+  accent-color: var(--gold);
+}
+
+.sound-ptt {
+  border-top: 1px solid var(--line);
+  margin-top: 4px;
+  padding-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sound-ptt .ptt-key {
+  margin: 0 12px 8px;
+  align-self: flex-start;
+}
+
+.sound-ptt .ptt-key.capturing {
+  border-color: var(--gold);
+  color: var(--gold);
+}
+
+.icon-btn.ptt {
+  position: relative;
+  opacity: 0.75;
+}
+
+.icon-btn.ptt.talking {
+  opacity: 1;
+  box-shadow: 0 0 0 2px #4ade80, 0 0 14px rgba(74, 222, 128, 0.6);
+}
+
+.ptt-badge {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  font-size: 0.6rem;
+  font-weight: 800;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 6px;
+  background: #0b120e;
+  border: 1px solid var(--line);
+  color: var(--text);
+}
+
+@media (max-width: 760px) {
+  .sound-popover {
+    position: fixed;
+    top: 88px;
+    left: 12px;
+    right: 12px;
+    width: auto;
+    max-height: calc(100dvh - 110px);
+    overflow-y: auto;
+  }
+}
+
+/* ===== Mikrofón + nastavenie push-to-talk ===== */
+.mic-button-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.mic-btn {
+  color: var(--text);
+}
+
+.mic-btn:not(.on) {
+  color: #ff8a8a;
+}
+
+.mic-icon-slash {
+  stroke: #ff6b6b;
+  stroke-width: 2.4;
+}
+
+.mic-caret {
+  margin-left: 2px;
+  width: 20px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.mic-caret.open,
+.mic-caret:hover {
+  color: var(--gold);
+  border-color: rgba(232, 194, 110, 0.6);
+}
+
+.sound-ptt-settings .ptt-key {
+  margin: 0 12px 8px;
+  align-self: flex-start;
+}
+
+.seat-muted {
+  display: grid;
+  place-items: center;
+  color: #ff8a8a;
+}

@@ -1,0 +1,562 @@
+/* Stránka /stats — sieť a prenos kamier a mikrofónov */
+.netstats {
+  --chart-grid: #2c2c2a;
+  --chart-base: #383835;
+  --chart-axis: #898781;
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-critical: #d03b3b;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 16px 16px 48px;
+  min-height: 100%;
+}
+
+.netstats h1 {
+  font-size: 1.4rem;
+  margin: 0;
+}
+
+.netstats h2 {
+  font-size: 1rem;
+  margin: 0;
+}
+
+.netstats .panel {
+  padding: 14px 16px;
+  gap: 8px;
+}
+
+.netstats-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  margin-bottom: 14px;
+}
+
+.netstats-top h1 {
+  margin-right: auto;
+}
+
+.netstats-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.netstats-controls .segmented {
+  min-width: 180px;
+}
+
+.netstats-select {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.netstats-select select,
+.netstats-custom input {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 7px 10px;
+  max-width: 220px;
+}
+
+.netstats-range {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.netstats-custom {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.netstats-status {
+  width: 100%;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.netstats-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  transition: opacity 0.2s ease;
+}
+
+.netstats-body.is-loading {
+  opacity: 0.75;
+}
+
+.netstats-empty {
+  color: var(--muted);
+  padding: 16px;
+}
+
+.netstats-note {
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin: 8px 0 0;
+}
+
+.netstats-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.netstats-section-head .netstats-note {
+  margin: 0;
+}
+
+/* Diagnóza */
+.nethints {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.nethint {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.25);
+  border-left: 4px solid var(--status-warning);
+}
+
+.nethint p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.nethint-critical {
+  border-left-color: var(--status-critical);
+}
+
+.nethint-ok {
+  border-left-color: var(--status-good);
+  align-items: center;
+}
+
+.nethint-flag {
+  flex: none;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--status-warning);
+}
+
+.nethint-critical .nethint-flag {
+  border-color: var(--status-critical);
+}
+
+.nethint-ok .nethint-flag {
+  border-color: var(--status-good);
+}
+
+/* Dlaždice servera */
+.nettiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.nettile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  position: relative;
+}
+
+.nettile-label,
+.nettile-note {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.nettile-value {
+  font-size: 1.35rem;
+}
+
+.nettile-flag {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--status-warning);
+}
+
+.nettile-critical .nettile-flag {
+  border-color: var(--status-critical);
+}
+
+/* Hráči */
+.netplayers {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.netplayer {
+  border-top: 3px solid var(--line);
+}
+
+.netplayer h3 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+.netplayer dl,
+.netcell-metrics {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 10px;
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.netplayer dt,
+.netcell-metrics dt {
+  color: var(--muted);
+}
+
+.netplayer dd,
+.netcell-metrics dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.netbad {
+  color: #ff9c9c;
+  font-weight: 700;
+}
+
+/* Matica spojení */
+.netmatrix-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.netmatrix {
+  border-collapse: separate;
+  border-spacing: 6px;
+  margin: -6px;
+  font-size: 0.8rem;
+}
+
+.netmatrix th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 700;
+  white-space: nowrap;
+  padding: 4px 6px;
+}
+
+.netmatrix-corner {
+  font-weight: 500;
+}
+
+.netcell {
+  vertical-align: top;
+  min-width: 190px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.25);
+  border-left: 4px solid var(--status-good);
+}
+
+.netcell-warn {
+  border-left-color: var(--status-warning);
+}
+
+.netcell-bad {
+  border-left-color: var(--status-critical);
+  background: rgba(208, 59, 59, 0.1);
+}
+
+.netcell-self {
+  background: transparent;
+  border: 0;
+  min-width: 0;
+}
+
+.netcell-none {
+  border-left-color: var(--line);
+  color: var(--muted);
+}
+
+.netcell-status {
+  font-weight: 800;
+  margin-bottom: 2px;
+}
+
+.netcell-path {
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.netcell-missing,
+.netcell-limit {
+  color: var(--muted);
+  margin-top: 6px;
+}
+
+.netcell-limit {
+  color: #ffd27a;
+}
+
+/* Grafy */
+.netcharts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  gap: 14px;
+}
+
+.netchart {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  padding: 12px 12px 8px;
+  min-width: 0;
+}
+
+.netchart-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+
+.netchart-head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.netchart-hint {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.netchart-legend {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 6px 0 2px;
+  padding: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.netchart-legend li {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.netchart-key {
+  display: inline-block;
+  width: 14px;
+  height: 3px;
+  border-radius: 2px;
+  flex: none;
+}
+
+.netchart-plot {
+  position: relative;
+  cursor: crosshair;
+  outline: none;
+  border-radius: 8px;
+}
+
+.netchart-plot:focus-visible {
+  box-shadow: 0 0 0 2px var(--gold);
+}
+
+.netchart-plot svg {
+  display: block;
+}
+
+.netchart-grid {
+  stroke: var(--chart-grid);
+  stroke-width: 1;
+}
+
+.netchart-base {
+  stroke: var(--chart-base);
+  stroke-width: 1;
+}
+
+.netchart-axis {
+  fill: var(--chart-axis);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.netchart-threshold {
+  stroke: var(--status-critical);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+  opacity: 0.7;
+}
+
+.netchart-cross {
+  stroke: var(--muted);
+  stroke-width: 1;
+}
+
+.netchart-selected {
+  stroke: var(--gold);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 3;
+}
+
+.netchart-tooltip {
+  position: absolute;
+  top: 8px;
+  width: 180px;
+  pointer-events: none;
+  background: #1a1a19;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 0.8rem;
+  box-shadow: var(--shadow);
+  z-index: 2;
+}
+
+.netchart-tooltip-time {
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.netchart-tooltip-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.netchart-tooltip-row strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.netchart-tooltip-row span:last-child {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.netchart-tooltip-event {
+  margin-top: 4px;
+  color: #ff9c9c;
+}
+
+/* Udalosti */
+.netevents {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.netevents th,
+.netevents td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.netevents th {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.netevents td:first-child {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.netevent-kind {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+/* Prihlásenie kľúčom */
+.netstats-login {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+
+.netstats-login-form {
+  width: min(380px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+}
+
+@media (max-width: 520px) {
+  .netcharts {
+    grid-template-columns: 1fr;
+  }
+
+  .netstats-top h1 {
+    width: 100%;
+  }
+
+  .netcell {
+    min-width: 170px;
+  }
+}
+
+/* Spotreba Cloudflare — dlhší popis (zostatok, dnešok, odhad na koniec mesiaca) */
+.nettile-wide {
+  grid-column: span 2;
+}
+
+@media (max-width: 520px) {
+  .nettile-wide {
+    grid-column: 1 / -1;
+  }
+}

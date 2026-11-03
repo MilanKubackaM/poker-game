@@ -1,0 +1,12 @@
+{
+  "TCP": {
+    "443": { "HTTPS": true },
+    "8443": { "TCPForward": "10.213.0.10:3478", "TerminateTLS": "${TS_CERT_DOMAIN}" }
+  },
+  "Web": {
+    "${TS_CERT_DOMAIN}:443": {
+      "Handlers": { "/": { "Proxy": "http://poker-night:3000" } }
+    }
+  },
+  "AllowFunnel": { "${TS_CERT_DOMAIN}:443": true, "${TS_CERT_DOMAIN}:8443": true }
+}

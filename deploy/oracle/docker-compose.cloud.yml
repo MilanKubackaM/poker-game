@@ -1,0 +1,43 @@
+# Produkcia na cloudovom VM (Oracle Always Free): hra za Caddy s automatickým HTTPS (Let's Encrypt).
+name: poker-night
+# Spúšťa deploy.sh z koreňa repozitára: docker compose -f deploy/oracle/docker-compose.cloud.yml up -d --build
+services:
+  poker:
+    build: ../..
+    image: poker-night:latest
+    container_name: poker-night
+    restart: unless-stopped
+    environment:
+      PORT: "3000"
+      # HTTPS rieši Caddy, vlastný self-signed server netreba
+      HTTPS_PORT: "0"
+      PUBLIC_HOST: "${DOMAIN:?DOMAIN chýba}"
+      ICE_SERVERS: "${ICE_SERVERS:-}"
+      # Caddy nastaví X-Forwarded-For na IP klienta — hra je dostupná len cez Caddy, hlavičke sa dá veriť
+      TRUST_PROXY: "xff"
+    volumes:
+      - poker-data:/app/data
+    expose:
+      - "3000"
+
+  caddy:
+    image: caddy:2.8-alpine
+    container_name: poker-caddy
+    restart: unless-stopped
+    depends_on:
+      - poker
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: "${DOMAIN}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  poker-data:
+  caddy-data:
+  caddy-config:
