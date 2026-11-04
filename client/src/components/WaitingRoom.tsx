@@ -137,6 +137,7 @@ export function WaitingRoom(props: TableScreenProps) {
         leaveLabel="Opustiť hru"
         leaveHint="Žetóny aj štatistiky ostanú pri stole, kým ho host nezmaže"
         initialMenuOpen={initialUi?.menuOpen}
+        initialHelpChapter={initialUi?.helpChapter}
       />
 
       <div className="table-layout">
@@ -226,7 +227,7 @@ export function WaitingRoom(props: TableScreenProps) {
                   return (
                     <article key={player.id} className={classes.join(' ')}>
                       <div className="room-player-top">
-                        <div className="room-portrait" style={{ background: player.avatar.color }}>
+                        <div className={props.speaking?.has(player.id) ? 'room-portrait speaking' : 'room-portrait'} style={{ background: player.avatar.color }} title={props.speaking?.has(player.id) ? 'Práve hovorí' : undefined}>
                           {showVideo ? <VideoTile stream={stream} mirrored={isMe} /> : <span className="room-emoji">{player.avatar.emoji}</span>}
                           <span className={player.connected ? 'presence online' : 'presence'} title={player.connected ? 'online' : 'offline'} />
                         </div>
@@ -242,6 +243,7 @@ export function WaitingRoom(props: TableScreenProps) {
                           </div>
                           <div className="room-player-tags">
                             <span className={player.connected ? 'presence-text online' : 'presence-text'}>{player.connected ? 'online' : 'offline'}</span>
+                            {player.id === roles.ownerId && <span className="badge badge-host badge-role">host</span>}
                             {player.id !== roles.ownerId && roles.isAdmin(player.id) && <span className="badge badge-cohost">spoluhost</span>}
                             {player.id === roles.bankerId && <span className="badge badge-banker">bankár</span>}
                             {stateLabel(player)}

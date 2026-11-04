@@ -16,6 +16,9 @@ Každý má avatara a môže si zapnúť webkameru (a mikrofón) — video nahra
 - **Odchod a návrat:** „Odísť od stola“ hráča postaví a presunie do čakárne stola (hra beží ďalej, „Späť ku stolu“ = počkať na BB alebo zaplatiť). Až „Opustiť hru“ v čakárni uvoľní miesto, ale účet ostáva — stack, štatistiky aj timebank sa uložia a pri návrate (z „Moje stoly“, aj po zatvorení prehliadača) sa hráč automaticky posadí späť. Odchod hráča stôl nikdy nezmaže. Roly sa nikdy nedávajú náhodnému hráčovi: keď odíde bankár, bankárom sa stane zakladateľ (ak sedí), inak niektorý host; keď pri stole neostane nikto s právami hosta, prevezme ich bankár. Ak nesedí nikto s rolou, hra beží ďalej, ale nikto nepúšťa nových hráčov ani nedobíja, kým sa nevráti zakladateľ, host alebo bankár (zakladateľ po návrate dostane práva späť)
 - **Stôl:** side poty, all-in runout, heads-up pravidlá, pevný čas na ťah (základ 15 s + osobný timebank 5–200 s, štart 50 s) s auto-check/fold, reconnect po obnovení stránky, chat a priebeh hry
 - **Kamery:** WebRTC P2P (mesh) — video ide priamo medzi hráčmi, server len sprostredkuje signalizáciu
+- **Kto hovorí:** hráč, od ktorého práve ide zvuk, má zelený pulzujúci okraj avatara a zelený mikrofón (meranie hlasitosti v prehliadači, nič nejde na server)
+- **Roly pri stole:** ♛ zakladateľ, ★ spoluhost, 🏦 bankár — ikonka pred menom pri stole aj v čakárni
+- **Vysvetlivky:** menu ☰ → 📖 Vysvetlivky — pravidlá módov, priebeh ruky, pauza, bankár a cashout so screenshotmi z hry ([VYSVETLIVKY.sk.md](VYSVETLIVKY.sk.md))
 - **Overiteľné miešanie:** do každého balíčka prispieva náhodou aj prehliadač každého hráča (commit–reveal); po hre si hráč stiahne dôkazy (Štatistiky → História) a overí ich skriptom `tools/verify-fairness.ts`. Celý model dôvery je po anglicky v [README.md](../README.md)
 
 Vizuál všetkých obrazoviek (desktop + mobil): [UI.md](UI.md)
@@ -85,6 +88,27 @@ Video funguje cez verejný STUN server; pri prísnych NAT-och treba TURN server 
 ```yaml
       ICE_SERVERS: '[{"urls":"stun:stun.l.google.com:19302"},{"urls":"turn:turn.example.com:3478","username":"u","credential":"p"}]'
 ```
+
+## Inštalácia ako aplikácia (PWA)
+
+Poker Night sa dá nainštalovať ako aplikácia s vlastným oknom a ikonou v Docku / na paneli úloh. Je to stále tá istá
+webová stránka zo servera, takže nová verzia sa prejaví hneď po nasadení a nič sa neinštaluje zvlášť pre Mac a Windows.
+
+V lobby svieti tlačidlo **Nainštalovať ako aplikáciu**:
+
+- **Chrome / Edge (Windows, Mac, Android):** otvorí inštalačný dialóg prehliadača. Po inštalácii sa v karte prehliadača
+  zmení na **Otvor v aplikácii** (len desktop; Chrome / Edge 139+ otvorí odkaz rovno v nainštalovanej aplikácii)
+- **Ostatné (všetky prehliadače na iPhone/iPade, Safari na Macu 17+, Samsung Internet, Firefox, Edge na Androide,
+  prehliadače v aplikáciách ako Messenger či Instagram):** inštaláciu na jedno ťuknutie nepovoľujú, tlačidlo preto otvorí
+  animovaný návod pre rozpoznaný prehliadač — kreslený výsek obrazovky so zvýrazneným tlačidlom, krok po kroku, a šípka
+  „tu“ k skutočnému tlačidlu prehliadača (`client/src/installGuide.ts`). Prehliadač v aplikácii najprv pošle stránku
+  otvoriť v Safari/Chrome. Aplikácia pridaná cez Safari má vlastné
+  úložisko oddelené od prehliadača, takže uložené stoly a záznamy pre overenie férovosti z prehliadača v nej nie sú
+  (a naopak), a „Otvor v aplikácii“ sa tu ponúknuť nedá
+
+Inštalácia funguje len cez HTTPS (alebo `localhost`). Service worker (`client/public/sw.js`) nič neukladá do cache, len
+pri nedostupnom serveri ukáže hlásenie „Server je teraz nedostupný“. Ikony sa generujú z `tools/icons/*.svg` skriptom
+`tools/make-icons.sh`.
 
 ## Ako sa hrá
 

@@ -7,11 +7,14 @@
  *
  * Every file of the local build (dist/client) is downloaded from the server and compared by SHA-256. The entry page
  * only loads scripts by their content-hashed names, so matching files mean the browser runs exactly this code.
+ * The manifest is the one file the server adapts: it resolves the app's own `related_applications` entry to its host
+ * (shared/manifest.ts), so the local copy is resolved the same way before comparing.
  * Limitation: a server could in theory send different files to different visitors; this proves what it sent to you.
  */
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
+import { resolveManifest } from '../shared/manifest';
 
 const base = process.argv[2]?.replace(/\/+$/, '');
 if (!base) {
@@ -42,7 +45,8 @@ for (const file of local.sort()) {
   const relative = path.relative(root, file).split(path.sep).join('/');
   const response = await fetch(`${base}/${relative === 'index.html' ? '' : relative}`, { cache: 'no-store' });
   const served = new Uint8Array(await response.arrayBuffer());
-  const expected = sha256(readFileSync(file));
+  const built = readFileSync(file);
+  const expected = sha256(relative === 'manifest.webmanifest' ? Buffer.from(resolveManifest(built.toString('utf8'), new URL(base).origin)) : built);
   const actual = sha256(served);
   const ok = response.ok && expected === actual;
   mismatches += ok ? 0 : 1;

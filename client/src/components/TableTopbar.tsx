@@ -1,11 +1,13 @@
-import { useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import type { SeatPlayerView, TableView } from '../../../shared/types';
 import { VARIANT_LABELS } from '../../../shared/constants';
 import { formatMoney } from '../../../shared/money';
 import { handsLabel } from '../../../shared/plural';
-import { SoundButton } from '../sound';
+import { SoundButton, SoundMenuItems, useDismiss } from '../sound';
+import { HelpDialog } from './HelpDialog';
 import { CameraIcon } from './MediaIcons';
 import { MicButton } from './MicButton';
+import { MicIcon } from './MicIcon';
 
 /** Skopíruje odkaz na pozvánku do schránky (alebo ho ukáže na ručné skopírovanie); `copied` svieti 2 s. */
 export function useCopyInvite(inviteUrl: string): { copied: boolean; copy: () => Promise<void> } {
@@ -58,15 +60,20 @@ interface TableTopbarProps {
   /** Tlačidlo panelu: host (♛ Host) alebo bankár bez práv hosta (🏦 Bank). */
   hostButton?: 'host' | 'bank';
   initialMenuOpen?: boolean;
+  /** Demo: Vysvetlivky otvorené na tejto kapitole. */
+  initialHelpChapter?: string;
   /** Obsah v strede lišty (napr. banner špeciálneho kola). */
   children?: ReactNode;
 }
 
 export function TableTopbar(props: TableTopbarProps) {
-  const { view, inviteUrl, camera, microphone, me, onToggleCamera, onToggleMicrophone, onToggleChat, onOpenStats, onAway, onReturn, onLeave, leaveLabel, leaveHint, leaveDisabled, pushToTalk, onOpenHost, hostButton = 'host', initialMenuOpen, children } = props;
+  const { view, inviteUrl, camera, microphone, me, onToggleCamera, onToggleMicrophone, onToggleChat, onOpenStats, onAway, onReturn, onLeave, leaveLabel, leaveHint, leaveDisabled, pushToTalk, onOpenHost, hostButton = 'host', initialMenuOpen, initialHelpChapter, children } = props;
   const sittingOut = !!me?.sittingOut;
   const away = !!me?.away;
   const [menuOpen, setMenuOpen] = useState(!!initialMenuOpen);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [helpOpen, setHelpOpen] = useState(!!initialHelpChapter);
+  useDismiss(menuOpen, setMenuOpen, menuRef);
   const { copied, copy } = useCopyInvite(inviteUrl);
   const money = (cents: number) => formatMoney(cents, view.settings.currency);
   const handLive = !!view.hand && view.hand.street !== 'complete';
@@ -123,10 +130,11 @@ export function TableTopbar(props: TableTopbarProps) {
       </div>
       {children}
       <div className="topbar-right">
+        {/* Na mobile je pauza, kamera, mikrofón a zvuk v menu ☰ (`.menu-mobile`) — v lište ostáva chat, štatistiky, host a ☰. */}
         {me && !sittingOut && (
           <button
             type="button"
-            className={away ? 'icon-btn away-btn on' : 'icon-btn away-btn'}
+            className={away ? 'icon-btn away-btn topbar-desk on' : 'icon-btn away-btn topbar-desk'}
             onClick={() => onAway(!away)}
             title={away ? 'Som späť — zrušiť krátku pauzu' : 'Krátka pauza (som hneď späť)'}
             aria-label={away ? 'Som späť' : 'Krátka pauza'}
@@ -135,11 +143,22 @@ export function TableTopbar(props: TableTopbarProps) {
             ☕
           </button>
         )}
-        <button type="button" className={camera ? 'icon-btn mic-btn on' : 'icon-btn mic-btn'} onClick={onToggleCamera} title={camera ? 'Kamera zapnutá — vypnúť' : 'Kamera vypnutá — zapnúť'} aria-label="Kamera" aria-pressed={camera}>
+        <button
+          type="button"
+          className={camera ? 'icon-btn mic-btn topbar-desk on' : 'icon-btn mic-btn topbar-desk'}
+          onClick={onToggleCamera}
+          title={camera ? 'Kamera zapnutá — vypnúť' : 'Kamera vypnutá — zapnúť'}
+          aria-label="Kamera"
+          aria-pressed={camera}
+        >
           <CameraIcon off={!camera} />
         </button>
-        <MicButton microphone={microphone} onToggle={onToggleMicrophone} pushToTalk={pushToTalk} />
-        <SoundButton />
+        <span className="topbar-desk">
+          <MicButton microphone={microphone} onToggle={onToggleMicrophone} pushToTalk={pushToTalk} />
+        </span>
+        <span className="topbar-desk">
+          <SoundButton />
+        </span>
         <button type="button" className="icon-btn chat-toggle" onClick={onToggleChat} title="Chat">
           💬
         </button>
@@ -153,17 +172,46 @@ export function TableTopbar(props: TableTopbarProps) {
             {hostButton === 'bank' ? '🏦' : '♛'} <span className="hide-sm">{hostButton === 'bank' ? 'Bank' : 'Host'}</span>
           </button>
         )}
-        <div className="menu-wrap">
+        <div className="menu-wrap" ref={menuRef}>
           <button type="button" className="icon-btn" onClick={() => setMenuOpen(!menuOpen)} aria-label="Menu">
             ☰
           </button>
           {menuOpen && (
             <div className="menu" onClick={() => setMenuOpen(false)}>
+              <div className="menu-mobile">
+                {me && !sittingOut && (
+                  <button type="button" className={away ? 'menu-item menu-row menu-item-on' : 'menu-item menu-row'} onClick={() => onAway(!away)} aria-pressed={away}>
+                    <span className="menu-row-icon" aria-hidden>
+                      ☕
+                    </span>
+                    <span>{away ? 'Som späť' : 'Krátka pauza'}</span>
+                  </button>
+                )}
+                <button type="button" className="menu-item menu-row" onClick={onToggleCamera} aria-pressed={camera}>
+                  <span className="menu-row-icon">
+                    <CameraIcon off={!camera} size={18} />
+                  </span>
+                  <span>Kamera</span>
+                  <span className={camera ? 'menu-row-state on' : 'menu-row-state'}>{camera ? 'zapnutá' : 'vypnutá'}</span>
+                </button>
+                <button type="button" className="menu-item menu-row" onClick={onToggleMicrophone} aria-pressed={microphone}>
+                  <span className="menu-row-icon">
+                    <MicIcon off={!microphone} size={18} />
+                  </span>
+                  <span>Mikrofón</span>
+                  <span className={microphone ? 'menu-row-state on' : 'menu-row-state'}>{microphone ? 'zapnutý' : 'vypnutý'}</span>
+                </button>
+                <SoundMenuItems />
+                <div className="menu-separator" role="separator" />
+              </div>
               {me && sittingOut && (
                 <button type="button" className="menu-item" onClick={onReturn}>
                   <span>▶ Vrátiť sa do hry</span>
                 </button>
               )}
+              <button type="button" onClick={() => setHelpOpen(true)}>
+                📖 Vysvetlivky
+              </button>
               <button type="button" onClick={copy}>
                 🔗 Kopírovať pozvánku
               </button>
@@ -175,6 +223,7 @@ export function TableTopbar(props: TableTopbarProps) {
           )}
         </div>
       </div>
+      {helpOpen && <HelpDialog view={view} initialChapter={initialHelpChapter} onClose={() => setHelpOpen(false)} />}
     </header>
   );
 }

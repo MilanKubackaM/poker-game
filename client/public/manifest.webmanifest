@@ -1,0 +1,45 @@
+{
+  "id": "/",
+  "name": "Poker Night",
+  "short_name": "Poker Night",
+  "description": "Súkromný poker stôl pre partiu kamarátov — s kamerami, žetónmi a pravidlami podľa vás.",
+  "lang": "sk",
+  "dir": "ltr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#08110d",
+  "theme_color": "#0b2e1f",
+  "categories": [
+    "games",
+    "entertainment"
+  ],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "related_applications": [
+    {
+      "platform": "webapp",
+      "url": "/manifest.webmanifest",
+      "id": "/"
+    }
+  ],
+  "prefer_related_applications": false
+}

@@ -13,6 +13,7 @@ import { ActionBar } from './ActionBar';
 import { ChatToasts } from './ChatToasts';
 import { DealerChoiceModal, DrawBanner, DrawExplainModal, DrawField, cardLabel } from './DrawLayer';
 import { HostPanel, type BankActions, type HostActions } from './HostPanel';
+import { playerRoles } from './HostPlayers';
 import { PlayingCard } from './PlayingCard';
 import { Confetti, ModeIntroModal, PiggyBank, PiggyFlight, PiggyWonDialog, inPiggy, usePiggySounds } from './GameModes';
 import { ReturnDialog, StatusBanner, owesBlinds, returnModeOf, standingText } from './PlayerPause';
@@ -59,6 +60,8 @@ export interface TableUiState {
   /** Leaderboard / história — v bočnom paneli počas hry aj v čakárni. */
   statsTab?: StatsTab;
   menuOpen?: boolean;
+  /** Demo: otvorené Vysvetlivky na kapitole. */
+  helpChapter?: string;
   /** Otvorený dialóg návratu do hry (demo). */
   returnOpen?: boolean;
   /** Demo: otvorený dialóg zmazania stola (v pravidlách hosta / čakárne). */
@@ -74,6 +77,8 @@ export interface TableScreenProps {
   /** Kvalita spojenia s ostatnými hráčmi (priamo / relay, RTT, straty). */
   links?: Map<string, LinkInfo>;
   localStream: MediaStream | null;
+  /** Hráči, ktorí práve hovoria (meranie hlasitosti mikrofónu) — zvýraznia sa pri stole aj v čakárni. */
+  speaking?: ReadonlySet<string>;
   camera: boolean;
   microphone: boolean;
   mediaError: string | null;
@@ -152,6 +157,7 @@ export function TableScreen(props: TableScreenProps) {
   const me = view.players.find((player) => player.id === view.youId) ?? null;
   const isHost = isAdmin(view);
   const youAreBanker = isBanker(view);
+  const roles = playerRoles(view);
   const modeIntro = draw ? null : view.modeIntro ?? null;
   const piggy = view.piggy ?? null;
   const rabbit = view.rabbit && hand && view.rabbit.handNumber === hand.handNumber ? view.rabbit : null;
@@ -358,6 +364,7 @@ export function TableScreen(props: TableScreenProps) {
         onOpenHost={isHost || youAreBanker ? () => setHostOpen(true) : undefined}
         hostButton={isHost ? 'host' : 'bank'}
         initialMenuOpen={initialUi?.menuOpen}
+        initialHelpChapter={initialUi?.helpChapter}
       >
         {view.returnToLobbyPending ? (
           <div className="next-hand-banner lobby-pending-banner">
@@ -487,6 +494,8 @@ export function TableScreen(props: TableScreenProps) {
                   drawWinner={draw?.stage === 'done' && draw.winnerId === player.id}
                   piggy={piggy && piggyRow ? { wins: piggy.wins?.[player.id] ?? 0, target: piggy.target } : null}
                   piggyWinner={piggyFinished && piggyWinnerIds.has(player.id)}
+                  roles={roles}
+                  speaking={!!props.speaking?.has(player.id)}
                 />
               );
             })}

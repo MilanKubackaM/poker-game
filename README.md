@@ -132,6 +132,12 @@ npx tsx tools/verify-client.ts https://poker.example.ts.net
 Every file of the build is downloaded from the server and compared by SHA-256. The entry page loads scripts only by their
 content-hashed file names, so a full match means you ran exactly this code.
 
+The installable app (PWA) changes nothing here. Its service worker ([`client/public/sw.js`](client/public/sw.js)) is one
+of the compared files, caches nothing and only handles page loads, to show an offline message when the server is down.
+Every load still fetches the page and scripts from the server, so an installed app runs the same code as a browser tab.
+The manifest is the only file the server adapts (it writes its own address into the app's `related_applications` entry,
+[`shared/manifest.ts`](shared/manifest.ts)), and the verifier applies the same change to the local build before comparing.
+
 ## The trust gap
 
 **During a hand, the operator could read every player's hole cards and the rest of the deck from the server's memory, or

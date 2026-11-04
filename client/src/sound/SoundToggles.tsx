@@ -204,3 +204,57 @@ export function SoundButton() {
     </span>
   );
 }
+
+/**
+ * Zvuk v menu ☰ na mobile, kde reproduktor v lište chýba: stlmenie (zatvorí menu ako ostatné položky)
+ * a rozbaľovacie nastavenia zvuku, ktoré menu nechajú otvorené.
+ */
+export function SoundMenuItems() {
+  const [prefs, setPrefs] = useSoundPreferences();
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const muted = prefs.muted;
+
+  return (
+    <>
+      <button
+        type="button"
+        className="menu-item menu-row"
+        onClick={() => {
+          setPrefs({ muted: !muted });
+          if (muted) {
+            playSample('chips');
+          }
+        }}
+        aria-pressed={!muted}
+      >
+        <span className="menu-row-icon">
+          <SpeakerIcon off={muted} size={18} />
+        </span>
+        <span>Zvuk</span>
+        <span className={muted ? 'menu-row-state' : 'menu-row-state on'}>{muted ? 'vypnutý' : 'zapnutý'}</span>
+      </button>
+      <button
+        type="button"
+        className={settingsOpen ? 'menu-item menu-row menu-item-on' : 'menu-item menu-row'}
+        onClick={(event) => {
+          event.stopPropagation();
+          setSettingsOpen(!settingsOpen);
+        }}
+        aria-expanded={settingsOpen}
+      >
+        <span className="menu-row-icon" aria-hidden>
+          🎚
+        </span>
+        <span>Nastavenia zvuku</span>
+        <span className="menu-row-caret" aria-hidden>
+          {settingsOpen ? '▴' : '▾'}
+        </span>
+      </button>
+      {settingsOpen && (
+        <div className="menu-sound-settings" onClick={(event) => event.stopPropagation()}>
+          <SoundSettings />
+        </div>
+      )}
+    </>
+  );
+}

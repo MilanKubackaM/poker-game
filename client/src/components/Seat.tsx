@@ -3,6 +3,7 @@ import type { Card, Currency, SeatPlayerView } from '../../../shared/types';
 import { formatMoney } from '../../../shared/money';
 import type { TurnClock } from '../turnClock';
 import { PiggyDots } from './GameModes';
+import { RoleBadge, type PlayerRoles } from './HostPlayers';
 import { MicIcon } from './MicIcon';
 import { playerStateLabel } from './PlayerPause';
 import { PlayingCard } from './PlayingCard';
@@ -41,10 +42,14 @@ interface SeatProps {
   piggy?: { wins: number; target: number } | null;
   /** Hráč práve vyhral prasiatko (zelená žiara). */
   piggyWinner?: boolean;
+  /** Kto je host, spoluhost a bankár — odznaky pred menom rovnaké ako v čakárni. */
+  roles: Pick<PlayerRoles, 'ownerId' | 'bankerId' | 'isAdmin'>;
+  /** Hráč práve hovorí — zelený pulzujúci okraj a mikrofón pri avatare. */
+  speaking?: boolean;
 }
 
 export function Seat(props: SeatProps) {
-  const { player, position, isMe, isTurn, turnClock, showTimeBank, isDealer, blind, stream, link, winAmount, bestCards, showdown, currency, drawnCard, drawWinner, piggy, piggyWinner } = props;
+  const { player, position, isMe, isTurn, turnClock, showTimeBank, isDealer, blind, stream, link, winAmount, bestCards, showdown, currency, drawnCard, drawWinner, piggy, piggyWinner, roles, speaking } = props;
   const stateLabel = playerStateLabel(player);
   const classes = ['seat'];
   if (isMe) {
@@ -71,6 +76,9 @@ export function Seat(props: SeatProps) {
   if (piggyWinner) {
     classes.push('seat-piggy-winner');
   }
+  if (speaking) {
+    classes.push('seat-speaking');
+  }
   const showVideo = !!stream && player.camera;
   if (showVideo) {
     classes.push('seat-has-video');
@@ -91,7 +99,13 @@ export function Seat(props: SeatProps) {
         <div className="seat-portrait" style={{ background: player.avatar.color }}>
           {showVideo ? <VideoTile stream={stream} mirrored={isMe} /> : <span className="seat-emoji">{player.avatar.emoji}</span>}
         </div>
-        {player.camera && !player.microphone && showVideo && <span className="seat-muted" title="Mikrofón vypnutý"><MicIcon off size={14} /></span>}
+        {speaking ? (
+          <span className="seat-speaking-mic" title="Práve hovorí">
+            <MicIcon size={14} />
+          </span>
+        ) : (
+          player.camera && !player.microphone && showVideo && <span className="seat-muted" title="Mikrofón vypnutý"><MicIcon off size={14} /></span>
+        )}
         {link && (link.relayed || link.lossPct >= 3 || (link.rttMs ?? 0) >= 300) && (
           <span
             className={link.lossPct >= 3 || (link.rttMs ?? 0) >= 300 ? 'seat-link bad' : 'seat-link'}
@@ -105,11 +119,7 @@ export function Seat(props: SeatProps) {
       </div>
       <div className="seat-plate" title={bankSec !== null ? `Timebank ${bankSec} s` : undefined}>
         <div className="seat-name">
-          {player.isHost ? (
-            <span className="host-crown" title="Hlavný host">♛</span>
-          ) : (
-            player.isAdmin && <span className="cohost-star" title="Spoluhost">★</span>
-          )}
+          <RoleBadge playerId={player.id} roles={roles} />
           {player.name}
         </div>
         <div className="seat-stack">{formatMoney(player.stack, currency)}</div>

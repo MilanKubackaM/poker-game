@@ -118,6 +118,8 @@ interface Scenario {
   ui?: TableUiState;
   events?: TableEvent[];
   chatToasts?: ChatToastItem[];
+  /** Hráči, ktorí v deme „hovoria“ (zelený okraj); `?speaking=p1,p2` to prepíše. */
+  speaking?: string[];
 }
 
 const SCREENS = [
@@ -164,6 +166,9 @@ const SCREENS = [
   'timebank-full',
   'room-playing',
   'omaha-showdown',
+  'table-roles',
+  'speaking',
+  'help',
 ];
 
 /** Stôl pred prvou rukou: čakacia miestnosť (`lobby`) alebo losovanie o dealer button (`draw`). */
@@ -189,6 +194,12 @@ function scenario(screen: string): Scenario | null {
   switch (screen) {
     case 'table':
       return { view: demoView() };
+    case 'table-roles':
+      return { view: demoView({ bankerId: 'p3' }) };
+    case 'speaking':
+      return { view: demoView({ legal: null, hand: demoHand({ toActId: 'p3' }) }), speaking: ['p1', 'p4'] };
+    case 'help':
+      return { view: demoView({ legal: null, hand: demoHand({ toActId: 'p3' }) }), ui: { helpChapter: new URLSearchParams(window.location.search).get('chapter') ?? 'start' } };
     case 'host':
     case 'host-game':
       return { view: demoView({ nextHand: { variant: 'omaha' }, settings: { ...demoView().settings, sevenDeuceAlways: true } }), ui: { hostOpen: true, hostTab: 'game' } };
@@ -639,6 +650,7 @@ export function DemoApp({ screen }: { screen: string }) {
         streams={streams}
         links={screen === 'net' ? DEMO_LINKS : undefined}
         localStream={localStream}
+        speaking={new Set(new URLSearchParams(window.location.search).get('speaking')?.split(',') ?? data.speaking ?? [])}
         camera
         microphone
         mediaError={null}

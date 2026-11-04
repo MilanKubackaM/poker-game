@@ -238,14 +238,14 @@ export function PiggyWonDialog({ piggy, currency, youId, onClose }: PiggyWonDial
 
 /* ---------- Dialóg s pravidlami módu ---------- */
 
-interface ModeInfo {
+export interface ModeInfo {
   icon: string;
   title: string;
   lead: string;
   rules: ReactNode[];
 }
 
-function modeInfo(mode: GameMode, settings: TableSettings, piggy: PiggyView | null): ModeInfo {
+export function modeInfo(mode: GameMode, settings: TableSettings, piggy: PiggyView | null): ModeInfo {
   const money = (cents: number) => formatMoney(cents, settings.currency);
   switch (mode) {
     case 'omaha':

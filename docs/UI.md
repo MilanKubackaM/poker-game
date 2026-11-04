@@ -218,6 +218,6 @@ Krátka pauza, postaviť sa, zvukové efekty a upozornenie na ťah, pozvánka, �
 `lobby`, `my-tables`, `invite`, `room`, `room-guest`, `room-piggy`, `dealer-choice`, `draw-explain`, `draw-pick`, `draw-done`,
 `table`, `timebank`, `showdown`, `omaha`, `pineapple`, `mode-intro-omaha`, `mode-intro-piggy`, `piggy`, `piggy-won`, `away`,
 `return-dialog`, `host-game`, `host-piggy`, `to-lobby`, `host-rules`, `host-players`, `chat`, `chat-toasts`, `transactions`,
-`leaderboard`, `history`, `menu`, `room-playing`, `delete-table`, `timebank-full` (`?turn=<id>` — kontrola prekryvu odpočtu so stávkou na 9 miestach)
+`leaderboard`, `history`, `menu`, `room-playing`, `delete-table`, `table-roles`, `speaking` (`?speaking=p1,p4`), `help` (`?chapter=piggy` — Vysvetlivky, pozri [VYSVETLIVKY.sk.md](VYSVETLIVKY.sk.md)), `timebank-full` (`?turn=<id>` — kontrola prekryvu odpočtu so stávkou na 9 miestach)
 
 Príklad: `http://localhost:3000/?demo=draw-pick`

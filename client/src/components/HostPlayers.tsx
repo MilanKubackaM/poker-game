@@ -257,6 +257,7 @@ export function HostPlayersList({ view, actions, bank }: { view: TableView; acti
               <div className="host-player-name">
                 <RoleBadge playerId={player.id} roles={roles} />
                 {player.name}
+                {player.id === roles.ownerId && <span className="badge badge-host badge-role">host</span>}
                 {player.id !== roles.ownerId && roles.isAdmin(player.id) && <span className="badge badge-cohost">spoluhost</span>}
                 {player.id === roles.bankerId && <span className="badge badge-banker">bankár</span>}
                 {!player.connected && <span className="badge badge-muted">offline</span>}

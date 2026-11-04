@@ -28,6 +28,7 @@ import { tableName } from './components/TableTopbar';
 import type { TableHandlers } from './components/TableScreen';
 import { GameScreen } from './components/WaitingRoom';
 import { RemoteAudio } from './components/VideoTile';
+import { useSpeakingIds } from './voiceActivity';
 import { ConfirmHost, choiceDialog, confirmDialog } from './components/ConfirmDialog';
 import { DemoApp } from './demo/DemoApp';
 import { useChatToasts } from './hooks/useChatToasts';
@@ -709,6 +710,22 @@ function LiveApp() {
   );
   const pushToTalk = usePushToTalk(media.stream, media.microphone, media.version);
   const { streams, links } = useMesh(!!joined && !!view, selfRtcId, peers, media.stream, media.version, config.iceServers);
+  const voiceSources = useMemo(() => {
+    const sources = new Map<string, MediaStream>();
+    if (!view) {
+      return sources;
+    }
+    for (const [playerId, stream] of streams) {
+      if (view.players.find((player) => player.id === playerId)?.microphone) {
+        sources.set(playerId, stream);
+      }
+    }
+    if (media.microphone && media.stream) {
+      sources.set(view.youId, media.stream);
+    }
+    return sources;
+  }, [view, streams, media.microphone, media.stream, media.version]);
+  const speaking = useSpeakingIds(voiceSources);
 
   if (joined && view) {
     const isLocalhost = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
@@ -729,6 +746,7 @@ function LiveApp() {
           streams={streams}
           links={links}
           localStream={media.stream}
+          speaking={speaking}
           camera={media.camera}
           microphone={media.microphone}
           mediaError={media.error}

@@ -1,6 +1,9 @@
-import { useState, type FormEvent } from 'react';
+import { useCallback, useState, type FormEvent } from 'react';
 import type { Currency, TableSettings, TableSummary, Variant } from '../../../shared/types';
 import { CURRENCIES, CURRENCY_LABELS, DEFAULT_SETTINGS, MAX_NAME_LENGTH, MAX_TABLE_NAME_LENGTH, VARIANT_LABELS } from '../../../shared/constants';
+import { promptInstall, useInstallOffer } from '../install';
+import type { InstallGuideId } from '../installGuide';
+import { InstallGuideDialog } from './InstallGuide';
 import { checkMoneyRules, moneyRulesDraft, type MoneyRulesDraft } from '../moneyRules';
 import type { Profile } from '../storage';
 import { AvatarPicker } from './AvatarPicker';
@@ -37,6 +40,9 @@ interface LobbyProps {
 
 export function Lobby(props: LobbyProps) {
   const { profile, onProfileChange, inviteCode, busy, error, onCreate, onJoin, onCancelInvite, myTables = [], resumingCode = null, onResumeTable, onForgetTable, leftTables, tableErrors, notice = null, onDismissNotice } = props;
+  const installOffer = useInstallOffer();
+  const [installGuide, setInstallGuide] = useState<InstallGuideId | null>(null);
+  const closeInstallGuide = useCallback(() => setInstallGuide(null), []);
   const [code, setCode] = useState('');
   const [tableName, setTableName] = useState('');
   const [currency, setCurrency] = useState<Currency>(DEFAULT_SETTINGS.currency);
@@ -68,6 +74,25 @@ export function Lobby(props: LobbyProps) {
         <h1>Poker Night</h1>
         <p>Súkromný poker stôl pre partiu kamarátov — s kamerami, žetónmi a pravidlami podľa vás.</p>
       </header>
+
+      {installOffer?.kind === 'open' && (
+        <a className="lobby-install" href={window.location.href} target="_blank" rel="noopener">
+          <img className="lobby-install-icon" src="/icons/icon-192.png" alt="" width={48} height={48} />
+          <span>Otvor v aplikácii</span>
+        </a>
+      )}
+      {(installOffer?.kind === 'prompt' || installOffer?.kind === 'manual') && (
+        <button
+          type="button"
+          className="lobby-install"
+          aria-haspopup={installOffer.kind === 'manual' ? 'dialog' : undefined}
+          onClick={() => (installOffer.kind === 'prompt' ? void promptInstall() : setInstallGuide(installOffer.guide))}
+        >
+          <img className="lobby-install-icon" src="/icons/icon-192.png" alt="" width={48} height={48} />
+          <span>Nainštalovať ako aplikáciu</span>
+        </button>
+      )}
+      {installGuide && <InstallGuideDialog guide={installGuide} onClose={closeInstallGuide} />}
 
       {notice && (
         <div className={notice.tone === 'danger' ? 'lobby-notice lobby-notice-danger' : 'lobby-notice'} role="status">

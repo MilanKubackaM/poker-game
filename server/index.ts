@@ -11,6 +11,7 @@ import { Server, type Socket } from 'socket.io';
 import { generate } from 'selfsigned';
 import type { Ack, Avatar, ClientConfig, JoinClosedPayload, JoinResult, NextHandOverride, PendingJoin, PendingResumeResult, PlayerAction, RtcPayload, TableDeletedPayload, TableEvent, TableMetaPayload, TableSettings, TableSummary } from '../shared/types';
 import { ACCEPTED_AVATAR_EMOJIS, AVATAR_COLORS, DEFAULT_SETTINGS, MAX_CHAT_LENGTH, MAX_NAME_LENGTH, MAX_TABLE_NAME_LENGTH } from '../shared/constants';
+import { resolveManifest } from '../shared/manifest';
 import { NET_SAMPLE_MS, sanitizeNetSample, type NetStatsResponse } from '../shared/netstats';
 import { LIMITS, TokenBucket, WINDOWS, WindowCounter, clientKey, originAllowed, trustProxyFromEnv } from './limits';
 import { CloudflareIceFile } from './cloudflareTurn';
@@ -346,7 +347,35 @@ app.get('/api/netstats', async (request, response) => {
 });
 
 if (existsSync(STATIC_DIR)) {
-  app.use(express.static(STATIC_DIR, { index: false, maxAge: '1h' }));
+  const manifestPath = path.join(STATIC_DIR, 'manifest.webmanifest');
+  const builtManifest = existsSync(manifestPath) ? readFileSync(manifestPath, 'utf8') : null;
+  app.get('/manifest.webmanifest', (request, response, next) => {
+    if (!builtManifest) {
+      next();
+      return;
+    }
+    const forwarded = (name: string) => (TRUST_PROXY !== 'off' ? request.get(name)?.split(',')[0]?.trim() : undefined);
+    const protocol = forwarded('x-forwarded-proto') ?? request.protocol;
+    const host = forwarded('x-forwarded-host') ?? request.get('host');
+    try {
+      const body = resolveManifest(builtManifest, `${protocol}://${host}`);
+      response.set('Cache-Control', 'no-cache').type('application/manifest+json').send(body);
+    } catch {
+      next();
+    }
+  });
+  const alwaysRevalidate = new Set(['sw.js', 'manifest.webmanifest']);
+  app.use(
+    express.static(STATIC_DIR, {
+      index: false,
+      maxAge: '1h',
+      setHeaders: (response, filePath) => {
+        if (alwaysRevalidate.has(path.basename(filePath))) {
+          response.set('Cache-Control', 'no-cache');
+        }
+      },
+    }),
+  );
   app.get(/^(?!\/api|\/socket\.io).*/, (_request, response) => {
     response.sendFile(path.join(STATIC_DIR, 'index.html'));
   });

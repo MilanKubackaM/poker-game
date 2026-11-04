@@ -1,0 +1,560 @@
+/* Animovaný návod „pridať na plochu“ (InstallGuide.tsx). Prefix pg- = kreslený výsek obrazovky telefónu. */
+.install-guide-backdrop {
+  z-index: 130;
+  background: rgba(0, 0, 0, 0.72);
+}
+
+.install-guide {
+  position: relative;
+  width: min(440px, 100%);
+  gap: 16px;
+  padding: 22px 20px 20px;
+}
+
+.install-guide h2 {
+  padding: 0 36px;
+}
+
+.install-guide-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+
+.install-guide-text {
+  min-height: 4.6em;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.install-guide-count {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gold);
+}
+
+.install-guide-dots {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+}
+
+.install-guide-dot {
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  border-radius: 50%;
+  border: 0;
+  background: rgba(255, 255, 255, 0.22);
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.install-guide-dot-active {
+  background: var(--gold);
+  transform: scale(1.25);
+}
+
+.install-guide-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+/* Šípka mimo dialógu, ktorá ukazuje na skutočné tlačidlo prehliadača pri okraji obrazovky. */
+.install-pointer {
+  position: fixed;
+  z-index: 131;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  color: var(--gold);
+  font-weight: 800;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.7));
+}
+
+.install-pointer-arrow {
+  width: 0;
+  height: 0;
+  border-left: 14px solid transparent;
+  border-right: 14px solid transparent;
+  border-top: 20px solid var(--gold);
+}
+
+.install-pointer-bottom-right,
+.install-pointer-bottom-center {
+  bottom: max(6px, env(safe-area-inset-bottom));
+  animation: pointer-bounce-down 1s ease-in-out infinite;
+}
+
+.install-pointer-bottom-right {
+  right: 22px;
+}
+
+.install-pointer-bottom-center {
+  left: 50%;
+  margin-left: -14px;
+}
+
+.install-pointer-top-right {
+  top: max(6px, env(safe-area-inset-top));
+  right: 18px;
+  flex-direction: column-reverse;
+  animation: pointer-bounce-up 1s ease-in-out infinite;
+}
+
+.install-pointer-top-right .install-pointer-arrow {
+  border-top: 0;
+  border-bottom: 20px solid var(--gold);
+}
+
+@keyframes pointer-bounce-down {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(8px);
+  }
+}
+
+@keyframes pointer-bounce-up {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+/* Výsek telefónu */
+.pg-phone {
+  position: relative;
+  height: 230px;
+  border-radius: 26px;
+  border: 3px solid #3a4a42;
+  background: #0d0f0e;
+  overflow: hidden;
+  text-align: left;
+  color: #f2f2f7;
+  font-size: 0.86rem;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+.pg-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+}
+
+.pg-screen-top {
+  justify-content: flex-start;
+}
+
+.pg-screen-bottom {
+  justify-content: flex-end;
+}
+
+.pg-screen-center {
+  justify-content: center;
+}
+
+.pg-page {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 9px;
+  padding: 8px 12px;
+  opacity: 0.6;
+}
+
+.pg-line {
+  display: block;
+  height: 9px;
+  width: 70%;
+  border-radius: 5px;
+  background: rgba(232, 194, 110, 0.22);
+}
+
+.pg-line-wide {
+  width: 90%;
+}
+
+.pg-line-short {
+  width: 45%;
+}
+
+.pg-dimmed .pg-page {
+  opacity: 0.25;
+}
+
+/* Lišta prehliadača */
+.pg-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 22px;
+  background: #1c1c1e;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+  animation: pg-fade-in 0.35s ease-out;
+}
+
+.pg-bar-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pg-url {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  border-radius: 16px;
+  background: #2c2c2e;
+  color: #d1d1d6;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pg-btn {
+  position: relative;
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  min-width: 36px;
+  height: 36px;
+  padding: 0 6px;
+  border-radius: 18px;
+  color: #f2f2f7;
+}
+
+.pg-btn-label {
+  position: absolute;
+  font-size: 0.6rem;
+  font-weight: 800;
+}
+
+.pg-glyph-text {
+  font-size: 1.05rem;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.04em;
+}
+
+/* Ponuka a zdieľací panel */
+.pg-menu,
+.pg-sheet-actions {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  border-radius: 16px;
+  background: #2c2c2e;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pg-menu {
+  position: absolute;
+  right: 10px;
+  width: min(230px, calc(100% - 20px));
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.6);
+}
+
+.pg-menu-top {
+  top: 10px;
+  transform-origin: top right;
+  animation: pg-pop 0.35s ease-out;
+}
+
+.pg-menu-bottom {
+  bottom: 10px;
+  transform-origin: bottom right;
+  animation: pg-pop 0.35s ease-out;
+}
+
+.pg-menu-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  color: #f2f2f7;
+}
+
+.pg-sheet {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 20px;
+  background: #1c1c1e;
+  box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.6);
+  animation: pg-slide-up 0.4s ease-out;
+}
+
+.pg-sheet-apps {
+  display: flex;
+  gap: 12px;
+  padding: 0 4px;
+}
+
+.pg-sheet-apps span {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: #3a3a3c;
+}
+
+.pg-sheet-apps span:nth-child(1) {
+  background: #34c759;
+}
+
+.pg-sheet-apps span:nth-child(2) {
+  background: #0a84ff;
+}
+
+.pg-identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pg-identity img {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+}
+
+.pg-identity div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.pg-identity span {
+  color: #8e8e93;
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Potvrdenie */
+.pg-confirm-ios {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 12px;
+  border-radius: 18px;
+  background: #1c1c1e;
+  animation: pg-slide-down 0.4s ease-out;
+}
+
+.pg-confirm-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #0a84ff;
+}
+
+.pg-confirm-nav strong {
+  color: #f2f2f7;
+}
+
+.pg-confirm-add {
+  position: relative;
+  padding: 4px 8px;
+  border-radius: 10px;
+  font-weight: 700;
+}
+
+.pg-dialog {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  top: 50%;
+  translate: 0 -50%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 22px;
+  background: #2b2f2d;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+  animation: pg-pop 0.35s ease-out;
+}
+
+.pg-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 18px;
+  color: #a8c7fa;
+  font-weight: 700;
+}
+
+.pg-dialog-action {
+  position: relative;
+  padding: 4px 10px;
+  border-radius: 12px;
+}
+
+/* Mac */
+.pg-menubar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  background: #2c2c2e;
+}
+
+.pg-menubar-item {
+  position: relative;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.pg-menubar-open {
+  background: #0a84ff;
+}
+
+.pg-mac-dropdown {
+  top: 46px;
+  left: 96px;
+  right: auto;
+  transform-origin: top left;
+  animation: pg-pop 0.3s ease-out;
+}
+
+/* Zvýraznený prvok + animácia ťuknutia */
+.pg-target {
+  background: rgba(232, 194, 110, 0.2);
+  box-shadow: 0 0 0 2px var(--gold);
+  color: #fff1c8;
+  animation: pg-pulse 1.6s ease-in-out infinite;
+}
+
+.pg-target::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 30px;
+  height: 30px;
+  margin: -15px 0 0 -15px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.75);
+  opacity: 0;
+  pointer-events: none;
+  animation: pg-tap 1.8s ease-out 0.6s infinite;
+}
+
+@keyframes pg-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px var(--gold), 0 0 0 0 rgba(232, 194, 110, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 0 2px var(--gold), 0 0 0 7px rgba(232, 194, 110, 0);
+  }
+}
+
+@keyframes pg-tap {
+  0% {
+    opacity: 0;
+    transform: scale(1.7);
+  }
+  25% {
+    opacity: 0.85;
+    transform: scale(1);
+  }
+  40% {
+    opacity: 0.85;
+    transform: scale(0.75);
+  }
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(2.2);
+  }
+}
+
+@keyframes pg-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes pg-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(40px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pg-slide-down {
+  from {
+    opacity: 0;
+    transform: translateY(-30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pg-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .install-pointer,
+  .pg-target,
+  .pg-target::after,
+  .pg-bar,
+  .pg-menu,
+  .pg-sheet,
+  .pg-dialog,
+  .pg-confirm-ios {
+    animation: none;
+  }
+}
