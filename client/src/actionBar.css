@@ -1,0 +1,211 @@
+/*
+ * Lišta akcií: farebné tlačidlá, predvoľby v tých istých slotoch a ochrana pred preklikom.
+ * Súbor sa načíta pred styles.css (import z komponentu), preto selektory začínajú `.action-bar` — vyššia špecificita
+ * než pôvodné `.btn-fold`, `.pre-action`, `.action-buttons .btn`.
+ *
+ * Farby: Fold červená, Check/Call zelená, Bet/Raise jantárová (zlatá ako téma), All-in tmavofialová.
+ * Predvoľby sú obrysové verzie tej istej farby; zvolená predvoľba je vyplnená ako skutočné tlačidlo.
+ */
+
+.action-bar {
+  --act-fold: #e25b5b;
+  --act-fold-fill: linear-gradient(180deg, #e46262, #a32d2d);
+  --act-fold-tint: #ffb8b8;
+  --act-call: #3fc283;
+  --act-call-fill: linear-gradient(180deg, #45c98a, #1b7748);
+  --act-call-tint: #a6f2cb;
+  --act-raise: #f0bd4f;
+  --act-raise-fill: linear-gradient(180deg, #f7d47a, #c68c1c);
+  --act-raise-tint: #ffe2a3;
+  --act-allin: #a64bd0;
+  --act-allin-fill: linear-gradient(180deg, #ad55d6, #57197f);
+  --act-allin-tint: #e6c2f8;
+}
+
+/* Rovnaká mriežka pre predvoľby aj skutočné akcie: Fold | Check/Call | Bet/Raise */
+.action-bar .action-buttons,
+.action-bar .action-buttons.pre-actions {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) minmax(0, 1.5fr);
+  gap: 8px;
+}
+
+.action-bar .action-buttons > .btn,
+.action-bar .action-buttons > .pre-action {
+  min-height: 52px;
+  padding: 6px 10px;
+  font-size: 1rem;
+  font-weight: 750;
+  border-radius: 12px;
+}
+
+/* Skutočné akcie */
+.action-bar .action-buttons > .action-fold {
+  background: var(--act-fold-fill);
+  color: #fff;
+}
+
+.action-bar .action-buttons > .action-call {
+  background: var(--act-call-fill);
+  color: #fff;
+}
+
+.action-bar .action-buttons > .action-raise {
+  background: var(--act-raise-fill);
+  color: #2a1c04;
+}
+
+.action-bar .action-buttons > .action-allin {
+  background: var(--act-allin-fill);
+  color: #fff;
+  box-shadow: inset 0 0 0 1px rgba(255, 220, 150, 0.55);
+}
+
+.action-bar .action-buttons > .btn {
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25);
+}
+
+.action-bar .action-buttons > .action-raise {
+  text-shadow: none;
+}
+
+/* Predvoľby — obrysové verzie farieb */
+.action-bar .action-buttons > .pre-action {
+  position: relative;
+  border-width: 1.5px;
+  border-style: solid;
+  transition: background 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+}
+
+/* Predvoľba sa radšej zalomí na dva riadky, než aby sa orezala („✓ Check / Fold“ v úzkom slote). */
+.action-bar .action-buttons > .pre-action {
+  white-space: normal;
+  line-height: 1.12;
+  text-align: center;
+}
+
+.action-bar .action-buttons > .pre-action span {
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.action-bar .action-buttons > .pre-action:hover {
+  filter: brightness(1.15);
+}
+
+.action-bar .action-buttons > .pre-action input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.action-bar .action-buttons > .pre-action:has(input:focus-visible) {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
+.action-bar .action-buttons > .pre-action.action-fold {
+  border-color: rgba(226, 91, 91, 0.7);
+  background: rgba(226, 91, 91, 0.1);
+  color: var(--act-fold-tint);
+}
+
+.action-bar .action-buttons > .pre-action.action-call {
+  border-color: rgba(63, 194, 131, 0.7);
+  background: rgba(63, 194, 131, 0.1);
+  color: var(--act-call-tint);
+}
+
+.action-bar .action-buttons > .pre-action.action-allin {
+  border-color: rgba(166, 75, 208, 0.75);
+  background: rgba(166, 75, 208, 0.12);
+  color: var(--act-allin-tint);
+}
+
+/* Zvolená predvoľba: vyplnená ako skutočné tlačidlo + svetlý okraj a fajka */
+.action-bar .action-buttons > .pre-action.active {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.85);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.3);
+}
+
+.action-bar .action-buttons > .pre-action.action-fold.active {
+  background: var(--act-fold-fill);
+  box-shadow: 0 0 0 3px rgba(226, 91, 91, 0.35);
+}
+
+.action-bar .action-buttons > .pre-action.action-call.active {
+  background: var(--act-call-fill);
+  box-shadow: 0 0 0 3px rgba(63, 194, 131, 0.35);
+}
+
+.action-bar .action-buttons > .pre-action.action-allin.active {
+  background: var(--act-allin-fill);
+  box-shadow: 0 0 0 3px rgba(166, 75, 208, 0.4);
+}
+
+.action-bar .action-buttons > .pre-action.active span::before {
+  content: '✓ ';
+}
+
+/* Ochrana pred preklikom: krátko po začiatku ťahu sú tlačidlá stlmené a pod nimi dobieha tenká čiarka (bez posunu layoutu). */
+.action-bar .action-buttons.guarded > .btn {
+  cursor: progress;
+  filter: saturate(0.55) brightness(0.88);
+}
+
+.action-bar .action-buttons.guarded::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -5px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--gold);
+  transform-origin: left center;
+  animation: action-guard 0.4s linear forwards;
+  pointer-events: none;
+}
+
+@keyframes action-guard {
+  from {
+    transform: scaleX(1);
+    opacity: 0.9;
+  }
+
+  to {
+    transform: scaleX(0);
+    opacity: 0.2;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .action-bar .action-buttons.guarded::after {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
+/* Desktop: tlačidlá vždy pri spodnom okraji lišty — keď sa nad nimi objaví stávka, riadok tlačidiel ostane na mieste. */
+@media (min-width: 761px) {
+  .action-bar > .actions {
+    align-self: end;
+  }
+}
+
+@media (max-width: 760px) {
+  .action-bar .action-buttons > .btn,
+  .action-bar .action-buttons > .pre-action {
+    min-height: 48px;
+    padding: 4px 6px;
+    font-size: 0.92rem;
+  }
+
+  .action-bar .action-buttons > .pre-action {
+    font-size: 0.84rem;
+  }
+}

@@ -43,6 +43,8 @@ export interface NextHandOverride {
   variant?: Variant;
   /** Koľko kôl (rúk) za sebou sa ešte zahrá v tomto variante; chýba = 1. Po každej rozdanej ruke klesá. */
   hands?: number;
+  /** Variant beží natrvalo — do vypnutia hostom; `hands` sa vtedy ignoruje a neodpočítava. */
+  permanent?: boolean;
   /** @deprecated 7-2 sa zapína len natrvalo cez `TableSettings.sevenDeuceAlways`; server toto pole ignoruje. */
   sevenDeuce?: boolean;
 }
@@ -83,7 +85,7 @@ export interface SeatPlayerView {
   away: boolean;
   missedBlinds: MissedBlinds;
   /**
-   * Timebank hráča v ms. Ušetrený základný čas sa delí dvomi a pripočíta; minutý timebank sa odpočíta.
+   * Timebank hráča v ms. Pripočíta sa štvrtina ušetreného základného času (TIME_BANK_SAVED_RATIO); minutý timebank sa odpočíta.
    * Nikdy neklesne pod TIME_BANK_MIN_SEC a nikdy nepresiahne TIME_BANK_MAX_SEC.
    * Počas jeho ťahu je to hodnota na začiatku ťahu (živý odpočet si klient počíta z turnBaseDeadline/turnDeadline).
    */
@@ -264,6 +266,59 @@ export interface HandHistoryEntry {
   wonWithoutShowdown: boolean;
   winners: HandHistoryWinner[];
   bounty: { winnerName: string; total: number } | null;
+  /** Prasiatko, ktoré sa touto rukou rozhodlo (víťaz/i a výplata); inak chýba. */
+  piggy?: { winners: { playerId: string; playerName: string; amount: number }[] } | null;
+}
+
+/**
+ * Moja ruka v histórii (`history:mine`) — server ju posiela len vlastníkovi kariet, nikdy iným hráčom.
+ * `net` = čo som v ruke vyhral mínus čo som do nej vložil (centy, bez Prasiatka a 7-2 bonusu).
+ */
+export interface MyHandRecord {
+  handNumber: number;
+  cards: Card[];
+  net: number;
+  folded: boolean;
+  /** Popis mojej najlepšej ruky, ak som došiel do showdownu; inak null. */
+  handDescription: string | null;
+}
+
+/** Člen stola, ktorý od stola odišiel (žetóny mu ostali uložené) — host ho môže vyhodiť alebo zlúčiť do iného hráča. */
+export interface DepartedMemberView {
+  id: string;
+  name: string;
+  avatar: Avatar;
+  /** Uložené žetóny (vrátane čakajúcich). */
+  stack: number;
+}
+
+/** Pesnička v jukeboxe (odkaz na YouTube); názov a dĺžku zistí prehliadač toho, kto ju pridáva. */
+export interface JukeboxTrack {
+  id: string;
+  videoId: string;
+  title: string;
+  durationSec: number;
+  addedById: string;
+  addedByName: string;
+}
+
+/**
+ * Stav jukeboxu stola (`jukebox:state`). Hodiny drží server: pesnička hrá od `current.startedAt` (server epoch ms),
+ * klient si posun počíta cez `serverTime`. Pretáčať, preskakovať ani pozastaviť sa nedá.
+ */
+export interface JukeboxView {
+  enabled: boolean;
+  current: (JukeboxTrack & { startedAt: number }) | null;
+  /** Čakajúce pesničky (bez práve hranej), najviac `JUKEBOX_MAX_QUEUE`. */
+  queue: JukeboxTrack[];
+  /** Kto môže práve pridať pesničku: víťazi poslednej dohranej ruky, ktorí za ňu ešte nepridali. */
+  eligibleIds: string[];
+  serverTime: number;
+}
+
+export interface JukeboxStatePayload {
+  code: string;
+  jukebox: JukeboxView;
 }
 
 /** Riadok leaderboardu — počíta server z ledgeru, stackov a histórie rúk (aj pre hráčov, ktorí odišli). */
@@ -327,7 +382,19 @@ export interface PiggyView {
   startedAtHand: number;
   /** Pri `finished`: víťaz(i) a výplata; pri remíze sa prasiatko delí (zvyšný cent prvému vľavo od buttonu). */
   winners: { playerId: string; playerName: string; amount: number }[];
+  /**
+   * Séria hier Prasiatka: `remaining` = koľko hier ešte zostáva vrátane práve bežiacej (pri `permanent` sa ignoruje),
+   * `permanent` = nové hry sa spúšťajú do vypnutia hostom, `stopping` = host séria ukončí po dohraní tejto hry,
+   * `total` = počet hier série pri štarte (bežiaca je `total − remaining + 1`; pri `permanent` 0).
+   */
+  series: { remaining: number; permanent: boolean; stopping: boolean; total: number };
 }
+
+/**
+ * Príkaz hosta pre Prasiatko: `start` = spustiť sériu (`games` hier za sebou, predvolene 1; `permanent` = do vypnutia),
+ * `stop` = dohrať bežiacu hru a ďalšiu nespúšťať, `cancel` = zrušiť hneď a vrátiť vklady.
+ */
+export type PiggyCommand = { action: 'start'; games?: number; permanent?: boolean } | { action: 'stop' } | { action: 'cancel' };
 
 /** Dialóg s pravidlami módu pred jeho prvou rukou — ruka sa nerozdá, kým nepotvrdia všetci (alebo neuplynie termín). */
 export interface ModeIntroView {
@@ -368,6 +435,8 @@ export interface TableView {
   bankerId: string;
   createdAt: number;
   youId: string;
+  /** Môžeš sa práve presadiť (začiatok hry alebo si ešte nedostal ruku). */
+  canChangeSeat: boolean;
   settings: TableSettings;
   nextHand: NextHandOverride | null;
   running: boolean;
@@ -399,6 +468,8 @@ export interface TableView {
   anteAmount: number;
   /** Čakajúce žiadosti o prístup ku stolu (schvaľuje host). */
   joinRequests: JoinRequestView[];
+  /** Členovia, ktorí od stola odišli (žetóny uložené) — vidí ich host kvôli vyhodeniu / zlúčeniu. */
+  departed: DepartedMemberView[];
 }
 
 /**
@@ -471,9 +542,19 @@ export interface RtcSignal {
   data: RtcPayload;
 }
 
+/**
+ * WebRTC signalizácia (server ju len prepošle). Ponuky posiela vždy strana s menším socket id; `session` označuje jedno
+ * spojenie — nová session = odpovedajúci zahodí staré spojenie a vytvorí čisté. `reset` = žiadosť o novú ponuku.
+ */
 export type RtcPayload =
-  | { kind: 'description'; description: { type: 'offer' | 'answer' | 'pranswer' | 'rollback'; sdp?: string } }
-  | { kind: 'candidate'; candidate: { candidate: string; sdpMid?: string | null; sdpMLineIndex?: number | null; usernameFragment?: string | null } };
+  | { kind: 'description'; session: string; description: { type: 'offer' | 'answer' | 'pranswer' | 'rollback'; sdp?: string } }
+  | { kind: 'candidate'; session: string; candidate: { candidate: string; sdpMid?: string | null; sdpMLineIndex?: number | null; usernameFragment?: string | null } }
+  | { kind: 'reset'; reason?: string };
+
+/** Server → starý socket hráča, keď sa ten istý hráč pripojil inde (iné okno / zariadenie). */
+export interface SessionReplacedPayload {
+  code: string;
+}
 
 export interface ClientConfig {
   iceServers: { urls: string | string[]; username?: string; credential?: string }[];

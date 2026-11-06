@@ -1,13 +1,13 @@
-import type { CSSProperties } from 'react';
+import type { CSSProperties, KeyboardEvent } from 'react';
 import type { Card, Currency, SeatPlayerView } from '../../../shared/types';
 import { formatMoney } from '../../../shared/money';
+import type { PlayerAudioSetting } from '../playerAudio';
 import type { TurnClock } from '../turnClock';
 import { PiggyDots } from './GameModes';
 import { RoleBadge, type PlayerRoles } from './HostPlayers';
 import { MicIcon } from './MicIcon';
 import { playerStateLabel } from './PlayerPause';
 import { PlayingCard } from './PlayingCard';
-import type { LinkInfo } from '../hooks/useMesh';
 import { VideoTile } from './VideoTile';
 
 export interface SeatPosition {
@@ -29,8 +29,6 @@ interface SeatProps {
   isDealer: boolean;
   blind: 'SB' | 'BB' | null;
   stream: MediaStream | null;
-  /** Kvalita spojenia s týmto hráčom; ikonka sa ukáže len pri relay alebo zlom spojení. */
-  link?: LinkInfo | null;
   winAmount: number;
   bestCards: Card[];
   showdown: boolean;
@@ -46,10 +44,16 @@ interface SeatProps {
   roles: Pick<PlayerRoles, 'ownerId' | 'bankerId' | 'isAdmin'>;
   /** Hráč práve hovorí — zelený pulzujúci okraj a mikrofón pri avatare. */
   speaking?: boolean;
+  /** Moje nastavenie zvuku tohto hráča (stlmený / iná hlasitosť) — ikonka pri avatare; null = predvolené. */
+  audio?: PlayerAudioSetting | null;
+  /** Klik na hráča otvorí jeho menu (hlasitosť, akcie hosta); bez neho sedadlo nie je klikateľné (moje miesto). */
+  onOpenMenu?: () => void;
+  /** Menu tohto hráča je práve otvorené. */
+  menuOpen?: boolean;
 }
 
 export function Seat(props: SeatProps) {
-  const { player, position, isMe, isTurn, turnClock, showTimeBank, isDealer, blind, stream, link, winAmount, bestCards, showdown, currency, drawnCard, drawWinner, piggy, piggyWinner, roles, speaking } = props;
+  const { player, position, isMe, isTurn, turnClock, showTimeBank, isDealer, blind, stream, winAmount, bestCards, showdown, currency, drawnCard, drawWinner, piggy, piggyWinner, roles, speaking, audio, onOpenMenu, menuOpen } = props;
   const stateLabel = playerStateLabel(player);
   const classes = ['seat'];
   if (isMe) {
@@ -79,6 +83,9 @@ export function Seat(props: SeatProps) {
   if (speaking) {
     classes.push('seat-speaking');
   }
+  if (menuOpen) {
+    classes.push('seat-menu-open');
+  }
   const showVideo = !!stream && player.camera;
   if (showVideo) {
     classes.push('seat-has-video');
@@ -86,9 +93,27 @@ export function Seat(props: SeatProps) {
   const ringStyle = { '--progress': turnClock?.progress ?? 0 } as CSSProperties;
   const bankSec = showTimeBank && typeof player.timeBankMs === 'number' ? Math.round(player.timeBankMs / 1000) : null;
   const visibleCards = player.cards.length > 0 && (!isMe || showdown);
+  const localAudio = audio && (audio.muted || audio.volume !== 1) ? audio : null;
+  const menuProps = onOpenMenu
+    ? {
+        'data-menu': '',
+        role: 'button',
+        tabIndex: 0,
+        'aria-haspopup': 'dialog' as const,
+        'aria-expanded': !!menuOpen,
+        'aria-label': `${player.name} — hlasitosť a možnosti`,
+        onClick: onOpenMenu,
+        onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
+          if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+            event.preventDefault();
+            onOpenMenu();
+          }
+        },
+      }
+    : {};
 
   return (
-    <div className={classes.join(' ')} style={{ left: `${position.x}%`, top: `${position.y}%` }}>
+    <div className={classes.join(' ')} style={{ left: `${position.x}%`, top: `${position.y}%` }} data-player-id={player.id} {...menuProps}>
       <div className="seat-portrait-wrap">
         {isTurn && turnClock && <div className={turnClock.phase === 'bank' ? 'turn-ring timebank' : 'turn-ring'} style={ringStyle} />}
         {isTurn && turnClock && (
@@ -106,12 +131,9 @@ export function Seat(props: SeatProps) {
         ) : (
           player.camera && !player.microphone && showVideo && <span className="seat-muted" title="Mikrofón vypnutý"><MicIcon off size={14} /></span>
         )}
-        {link && (link.relayed || link.lossPct >= 3 || (link.rttMs ?? 0) >= 300) && (
-          <span
-            className={link.lossPct >= 3 || (link.rttMs ?? 0) >= 300 ? 'seat-link bad' : 'seat-link'}
-            title={`${link.relayed ? 'Cez relay (server), nie priamo' : 'Priame spojenie'} · ${link.path} · odozva ${link.rttMs ?? '?'} ms · straty ${link.lossPct} %`}
-          >
-            {link.relayed ? 'relay' : '📶'} {link.rttMs ?? '?'} ms{link.lossPct >= 1 ? ` · ${link.lossPct} %` : ''}
+        {localAudio && (
+          <span className={localAudio.muted ? 'seat-local-audio muted' : 'seat-local-audio'} title={localAudio.muted ? 'Stlmený — len u teba, ostatní ho počujú' : `Hlasitosť u teba: ${Math.round(localAudio.volume * 100)} %`}>
+            {localAudio.muted ? '🔇' : `${Math.round(localAudio.volume * 100)}%`}
           </span>
         )}
         {isDealer && <span className="dealer-button">D</span>}
@@ -180,7 +202,14 @@ function HandDescription({ text }: { text: string }) {
 
 export function EmptySeat({ position, onClick }: { position: SeatPosition; onClick?: () => void }) {
   return (
-    <button type="button" className="seat-empty" style={{ left: `${position.x}%`, top: `${position.y}%` }} onClick={onClick} disabled={!onClick}>
+    <button
+      type="button"
+      className="seat-empty"
+      style={{ left: `${position.x}%`, top: `${position.y}%` }}
+      onClick={onClick}
+      disabled={!onClick}
+      title={onClick ? 'Presadnúť sa sem' : 'Presadiť sa dá len na začiatku hry'}
+    >
       <span>voľné</span>
     </button>
   );

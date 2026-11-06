@@ -12,7 +12,7 @@ import { Stats, type StatsTab } from './Stats';
 import { ChatToasts } from './ChatToasts';
 import { TableScreen, cashoutProps, useSidePanelState, type TableScreenProps } from './TableScreen';
 import { TableTopbar, tableName, useCopyInvite } from './TableTopbar';
-import { PiggyDots, PiggySvg, inPiggy } from './GameModes';
+import { PiggyDots, PiggySvg, inPiggy, piggySeriesLabel } from './GameModes';
 import { owesBlinds, playerStateLabel, returnModeOf } from './PlayerPause';
 import { loadRoomView, saveRoomView } from '../storage';
 import { confirmDialog } from './ConfirmDialog';
@@ -250,7 +250,7 @@ export function WaitingRoom(props: TableScreenProps) {
                             {player.camera && <span className="room-cam" title="Kamera zapnutá">📹</span>}
                           </div>
                         </div>
-                        {isHost && <PlayerActionsMenu player={player} actions={handlers.host} roles={roles} />}
+                        {isHost && <PlayerActionsMenu player={player} view={view} actions={handlers.host} roles={roles} />}
                       </div>
                       <PlayerMoneySection player={player} view={view} ledger={ledger} debt={debts.get(player.id) ?? 0} bank={handlers.bank} handRunning={handRunning} />
                     </article>
@@ -259,6 +259,40 @@ export function WaitingRoom(props: TableScreenProps) {
                 <PendingPlayerCards view={view} onResolve={handlers.host.resolveJoin} />
               </div>
             </section>
+
+            {isHost && (view.departed ?? []).length > 0 && (
+              <section className="room-players departed-section" aria-label="Odišli od stola">
+                <div className="room-section-head">
+                  <h2>Odišli od stola</h2>
+                  <span className="muted">{view.departed.length}</span>
+                </div>
+                <p className="departed-note">Žetóny majú uložené. Kto sa vrátil z iného zariadenia ako nový hráč, toho zlúč do jeho nového účtu.</p>
+                <div className="room-player-grid">
+                  {view.departed.map((member) => (
+                    <article key={member.id} className="room-player offline departed">
+                      <div className="room-player-top">
+                        <div className="room-portrait" style={{ background: member.avatar.color }}>
+                          <span className="room-emoji">{member.avatar.emoji}</span>
+                        </div>
+                        <div className="room-player-info">
+                          <div className="room-player-name">
+                            <RoleBadge playerId={member.id} roles={roles} />
+                            <span className="room-player-name-text">{member.name}</span>
+                          </div>
+                          <div className="room-player-stack">
+                            <span>uložené {money(member.stack)}</span>
+                          </div>
+                          <div className="room-player-tags">
+                            <span className="badge badge-left">mimo stola</span>
+                          </div>
+                        </div>
+                        <PlayerActionsMenu player={member} view={view} actions={handlers.host} roles={roles} />
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            )}
 
             <section className="panel room-rules">
               <h2>Pravidlá stola</h2>
@@ -339,7 +373,10 @@ function PiggySummary({ view }: { view: TableView }) {
         <div className="room-piggy-head">
           <h2>Prasiatko</h2>
           <strong className="room-piggy-amount">{money(piggy.amount)}</strong>
-          <span className="muted">vstup {money(piggy.entry)} na ruku · prvý s {piggy.target} krúžkami berie všetko</span>
+          <span className="muted">
+            vstup {money(piggy.entry)} na ruku · prvý s {piggy.target} krúžkami berie všetko
+            {piggySeriesLabel(piggy) && ` · ${piggySeriesLabel(piggy)}`}
+          </span>
         </div>
         {players.length > 0 && (
           <ul className="room-piggy-list">

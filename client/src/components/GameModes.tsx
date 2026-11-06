@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import type { Currency, GameMode, ModeIntroView, PiggyView, SeatPlayerView, TableSettings } from '../../../shared/types';
+import type { Currency, GameMode, ModeIntroView, NextHandOverride, PiggyView, SeatPlayerView, TableSettings } from '../../../shared/types';
 import { DISCARD_TIMEOUT_SEC } from '../../../shared/constants';
 import { formatMoney } from '../../../shared/money';
+import { handsLabel } from '../../../shared/plural';
 import { getSoundPreferences, playSound } from '../sound';
 
 function names(ids: string[], players: SeatPlayerView[]): string {
@@ -15,6 +16,53 @@ function prefersReducedMotion(): boolean {
 /** Hrá hráč v prasiatku? (vložil vstup alebo má krúžok) */
 export function inPiggy(piggy: PiggyView, playerId: string): boolean {
   return playerId in (piggy.contributed ?? {}) || playerId in (piggy.wins ?? {});
+}
+
+/* ---------- Popisy bežiacich módov ---------- */
+
+/** „1 hra“, „3 hry“, „5 hier“ */
+export function gamesLabel(count: number): string {
+  return `${count} ${count === 1 ? 'hra' : count >= 2 && count <= 4 ? 'hry' : 'hier'}`;
+}
+
+/** Dĺžka naplánovaného špeciálneho kola: „natrvalo“ alebo „3 kolá“. */
+export function specialRoundLabel(override: NextHandOverride): string {
+  return override.permanent ? 'natrvalo' : handsLabel(override.hands ?? 1);
+}
+
+/** Séria Prasiatka pokračuje ďalšou hrou (po dohraní tejto sa sama spustí ďalšia). Starší server `series` neposiela. */
+export function piggyContinues(piggy: PiggyView): boolean {
+  const series = piggy.series;
+  return !!series && !series.stopping && (series.permanent || series.remaining > 1);
+}
+
+/** Počet hier série pri spustení; null = natrvalo alebo starší server bez `series`. */
+export function piggySeriesTotal(piggy: PiggyView): number | null {
+  const total = piggy.series?.total;
+  return typeof total === 'number' && total > 0 ? total : null;
+}
+
+/**
+ * Popis série Prasiatka („hra 2 z 5“, „natrvalo“, „hra 3 z 5 · končí po tejto hre“); null = jediná hra.
+ * Bežiaca hra = `total - remaining + 1` (počas oslavy ešte ukazuje práve dohranú hru).
+ */
+export function piggySeriesLabel(piggy: PiggyView): string | null {
+  const series = piggy.series;
+  if (!series) {
+    return null;
+  }
+  const total = piggySeriesTotal(piggy);
+  const game = !series.permanent && total && total > 1 ? `hra ${Math.max(1, total - series.remaining + 1)} z ${total}` : null;
+  if (series.stopping) {
+    return game ? `${game} · končí po tejto hre` : 'končí po tejto hre';
+  }
+  if (series.permanent) {
+    return 'natrvalo';
+  }
+  if (game) {
+    return game;
+  }
+  return series.remaining > 1 ? `ešte ${gamesLabel(series.remaining)} vrátane tejto` : null;
 }
 
 /* ---------- Prasiatko: grafika ---------- */
@@ -86,15 +134,16 @@ export function PiggyBank({ piggy, currency, participants }: PiggyBankProps) {
     previous.current = piggy.amount;
   }, [piggy.amount, finished]);
 
+  const series = piggySeriesLabel(piggy);
   return (
-    <div className={finished ? 'piggy-bank finished' : 'piggy-bank'} title={`Prasiatko: ${money(piggy.amount)} · vstup ${money(piggy.entry)} na ruku · prvý s ${piggy.target} krúžkami berie všetko`}>
+    <div className={finished ? 'piggy-bank finished' : 'piggy-bank'} title={`Prasiatko: ${money(piggy.amount)} · vstup ${money(piggy.entry)} na ruku · prvý s ${piggy.target} krúžkami berie všetko${series ? ` · ${series}` : ''}`}>
       <span className="piggy-visual">
         <PiggySvg fill={finished ? 1 : fill} className="piggy-svg" />
         {drops > 0 && <span key={drops} className="piggy-coin" aria-hidden />}
       </span>
       <span className="piggy-info">
         <strong className="piggy-amount">{money(piggy.amount)}</strong>
-        <span className="piggy-entry">{finished ? 'prasiatko vyhraté!' : `vstup ${money(piggy.entry)}`}</span>
+        <span className="piggy-entry">{finished ? (piggyContinues(piggy) ? 'vyhraté! ďalšie sa spúšťa' : 'prasiatko vyhraté!') : `vstup ${money(piggy.entry)}${series ? ` · ${series}` : ''}`}</span>
       </span>
     </div>
   );
@@ -245,14 +294,16 @@ export interface ModeInfo {
   rules: ReactNode[];
 }
 
-export function modeInfo(mode: GameMode, settings: TableSettings, piggy: PiggyView | null): ModeInfo {
+/** `nextHand` = naplánované špeciálne kolo (pri intre Omahy / Pineapple povie, či beží natrvalo). */
+export function modeInfo(mode: GameMode, settings: TableSettings, piggy: PiggyView | null, nextHand?: NextHandOverride | null): ModeInfo {
   const money = (cents: number) => formatMoney(cents, settings.currency);
+  const permanentVariant = !!nextHand?.permanent && nextHand.variant === mode;
   switch (mode) {
     case 'omaha':
       return {
         icon: '🃏',
         title: 'Omaha',
-        lead: 'Ďalšia ruka sa hrá ako Omaha.',
+        lead: permanentVariant ? 'Od ďalšej ruky sa hrá Omaha natrvalo — kým ju host nevypne.' : 'Ďalšia ruka sa hrá ako Omaha.',
         rules: [
           <>
             Každý dostane <strong>4 karty</strong>.
@@ -276,7 +327,7 @@ export function modeInfo(mode: GameMode, settings: TableSettings, piggy: PiggyVi
       return {
         icon: '🍍',
         title: 'Pineapple',
-        lead: 'Ďalšia ruka sa hrá ako Pineapple.',
+        lead: permanentVariant ? 'Od ďalšej ruky sa hrá Pineapple natrvalo — kým ho host nevypne.' : 'Ďalšia ruka sa hrá ako Pineapple.',
         rules: [
           <>
             Každý dostane <strong>3 karty</strong>.
@@ -285,7 +336,7 @@ export function modeInfo(mode: GameMode, settings: TableSettings, piggy: PiggyVi
             Po preflope (pred flopom) <strong>jednu kartu zahodíš</strong> — ťukni na ňu a potvrď.
           </>,
           <>
-            Na zahodenie máš <strong>{DISCARD_TIMEOUT_SEC} s</strong>, potom sa karta zahodí automaticky.
+            Na zahodenie máš <strong>{DISCARD_TIMEOUT_SEC} s</strong> — keď nestihneš, zahodí sa za teba <strong>náhodná</strong> karta.
           </>,
           <>Ďalej sa hrá ako Texas Hold'em s 2 kartami v ruke.</>,
         ],
@@ -306,10 +357,15 @@ export function modeInfo(mode: GameMode, settings: TableSettings, piggy: PiggyVi
     case 'piggy': {
       const entry = piggy?.entry ?? settings.bigBlind;
       const target = piggy?.target ?? 3;
+      const series = piggy?.series;
       return {
         icon: '🐷',
         title: 'Prasiatko',
-        lead: 'Host spustil Prasiatko — hrá sa niekoľko rúk, kým ho niekto nevyhrá.',
+        lead: series?.permanent
+          ? 'Host spustil Prasiatko natrvalo — po každej vyhratej hre sa hneď spustí ďalšia, kým ho host nevypne.'
+          : series && (piggySeriesTotal(piggy!) ?? series.remaining) > 1
+            ? `Host spustil Prasiatko na ${gamesLabel(piggySeriesTotal(piggy!) ?? series.remaining)} za sebou — po vyhratej hre sa hneď spustí ďalšia.`
+            : 'Host spustil Prasiatko — hrá sa niekoľko rúk, kým ho niekto nevyhrá.',
         rules: [
           <>
             Pred každou rukou dá každý, kto dostane karty, <strong>vstup 1 BB = {money(entry)}</strong> do prasiatka. Vstup ide <strong>mimo potu</strong>.
@@ -324,7 +380,10 @@ export function modeInfo(mode: GameMode, settings: TableSettings, piggy: PiggyVi
           <>
             Prvý s <strong>{target} krúžkami</strong> berie celé prasiatko. Pri remíze sa delí.
           </>,
-          <>Host môže prasiatko zrušiť — vstupy sa vrátia.</>,
+          <>
+            Host môže Prasiatko spustiť aj na <strong>viac hier za sebou</strong> alebo <strong>natrvalo</strong> — pravidlá sa ukážu len pri prvej hre.
+          </>,
+          <>Host môže sériu ukončiť po dohraní hry, alebo Prasiatko zrušiť hneď — vtedy sa vstupy vrátia.</>,
         ],
       };
     }
@@ -335,19 +394,21 @@ interface ModeIntroModalProps {
   intro: ModeIntroView;
   settings: TableSettings;
   piggy: PiggyView | null;
+  /** Naplánované špeciálne kolo — pri Omahe / Pineapple natrvalo sa to povie v úvode. */
+  nextHand?: NextHandOverride | null;
   players: SeatPlayerView[];
   youId: string;
   secondsLeft: number;
   onAck: () => void;
 }
 
-export function ModeIntroModal({ intro, settings, piggy, players, youId, secondsLeft, onAck }: ModeIntroModalProps) {
+export function ModeIntroModal({ intro, settings, piggy, nextHand, players, youId, secondsLeft, onAck }: ModeIntroModalProps) {
   const [sent, setSent] = useState(false);
   const [closed, setClosed] = useState(false);
   const participant = intro.participants.includes(youId);
   const acknowledged = intro.acknowledged.includes(youId);
   const waiting = intro.participants.filter((id) => !intro.acknowledged.includes(id));
-  const info = modeInfo(intro.mode, settings, piggy);
+  const info = modeInfo(intro.mode, settings, piggy, nextHand);
   if (closed) {
     return null;
   }

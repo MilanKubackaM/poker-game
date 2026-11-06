@@ -1,3 +1,4 @@
+import { randomInt } from 'node:crypto';
 import type { BountyView, Card, HandRules, LegalActions, PlayerAction, PlayerStatus, Street, WinnerView } from '../../shared/types';
 import { HOLE_CARD_COUNT } from '../../shared/constants';
 import { freshDeck, rankValue, shuffle } from './cards';
@@ -292,6 +293,45 @@ export class HandEngine {
     return { ok: true };
   }
 
+  /**
+   * Fold mimo poradia (hráča vyhodil host): hráč hneď prestáva byť v ruke, aj keď nie je na ťahu, je all-in alebo sa
+   * práve zahadzuje / dorozdáva board. Jeho žetóny v pote ostávajú v pote. Vráti false, ak v ruke už nebol.
+   */
+  foldOut(playerId: string): boolean {
+    const player = this.player(playerId);
+    if (!player || this.isComplete || player.status === 'folded') {
+      return false;
+    }
+    if (this.toAct === player && this.street !== 'discard' && !this.awaitingRunout) {
+      return this.act(playerId, { type: 'fold' }).ok;
+    }
+    player.status = 'folded';
+    player.hasActed = true;
+    player.lastAction = 'Fold';
+    this.log(`${player.name}: fold`, 'action', player.id);
+    const live = this.livePlayers();
+    if (live.length === 1) {
+      this.returnUncalled();
+      this.finishFoldWin(live[0]);
+      return true;
+    }
+    if (this.awaitingRunout) {
+      return true;
+    }
+    if (this.street === 'discard') {
+      if (this.pendingDiscards().length === 0) {
+        this.discardPhaseDone = true;
+        this.proceedAfterBetting();
+      }
+      return true;
+    }
+    if (this.isRoundComplete()) {
+      this.closeRound();
+      this.proceedAfterBetting();
+    }
+    return true;
+  }
+
   discard(playerId: string, cardIndex: number): ActResult {
     if (this.street !== 'discard') {
       return { ok: false, error: 'Teraz sa nezahadzuje' };
@@ -323,9 +363,22 @@ export class HandEngine {
     return this.players.filter((player) => player.status !== 'folded' && !player.discarded);
   }
 
-  autoDiscardRemaining(): void {
+  /**
+   * Za hráča, ktorý sa nerozhodol (vypršal čas, je na pauze), zahodí náhodnú kartu. `random(max)` vracia celé číslo
+   * 0…max−1 — predvolene kryptografický `randomInt`, testy podstrčia vlastný.
+   */
+  autoDiscard(playerId: string, random: (max: number) => number = randomInt): ActResult {
+    const player = this.player(playerId);
+    if (this.street !== 'discard' || !player || player.status === 'folded' || player.discarded) {
+      return { ok: false, error: 'Teraz sa nezahadzuje' };
+    }
+    return this.discard(playerId, random(player.hole.length));
+  }
+
+  /** Všetkým, čo ešte nezahodili, zahodí náhodnú kartu (pozri `autoDiscard`). */
+  autoDiscardRemaining(random: (max: number) => number = randomInt): void {
     for (const player of this.pendingDiscards()) {
-      this.discard(player.id, player.hole.length - 1);
+      this.autoDiscard(player.id, random);
     }
   }
 

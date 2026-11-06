@@ -1,6 +1,6 @@
 import { randomBytes, randomInt, randomUUID } from 'node:crypto';
-import type { Avatar, Card, DealerChoice, DrawStage, DrawView, GameMode, HandHistoryEntry, HandHistoryWinner, HandResultView, HandRules, LeaderboardRow, LedgerEntry, LedgerKind, MissedBlinds, ModeIntroView, NextHandOverride, PiggyView, RabbitView, RunVoteView, PlayerAction, ReturnMode, SeatPlayerView, Settlement, TableEvent, TablePhase, TableSettings, TableStateView, TableSummary, TableView, Variant } from '../shared/types';
-import { CURRENCIES, CURRENCY_LABELS, DEFAULT_SETTINGS, DISCARD_TIMEOUT_SEC, DRAW_ACK_TIMEOUT_SEC, DRAW_PICK_TIMEOUT_SEC, DRAW_RESULT_MS, DRAW_SUIT_ORDER, HAND_PAUSE_MS, HOLE_CARD_COUNT, MAX_CHIPS, MAX_HISTORY_HANDS, MAX_NOTE_LENGTH, MAX_SEATS, MAX_SPECIAL_HANDS, MAX_TABLE_NAME_LENGTH, RABBIT_SHOW_MS, RUN_VOTE_SEC, MIN_PLAYERS_TO_START, MODE_INTRO_TIMEOUT_SEC, PIGGY_CELEBRATION_MS, PIGGY_TARGET_WINS, RUNOUT_STEP_MS, TIME_BANK_MAX_SEC, TIME_BANK_MIN_SEC, TIME_BANK_SAVED_RATIO, SUIT_SYMBOLS, VARIANT_LABELS } from '../shared/constants';
+import type { Avatar, Card, DealerChoice, DrawStage, DrawView, GameMode, HandHistoryEntry, HandHistoryWinner, HandResultView, HandRules, LeaderboardRow, LedgerEntry, LedgerKind, MissedBlinds, ModeIntroView, MyHandRecord, NextHandOverride, PiggyCommand, PiggyView, RabbitView, RunVoteView, PlayerAction, ReturnMode, SeatPlayerView, Settlement, TableEvent, TablePhase, TableSettings, TableStateView, TableSummary, TableView, Variant } from '../shared/types';
+import { CURRENCIES, CURRENCY_LABELS, DEFAULT_SETTINGS, DISCARD_TIMEOUT_SEC, DRAW_ACK_TIMEOUT_SEC, DRAW_PICK_TIMEOUT_SEC, DRAW_RESULT_MS, DRAW_SUIT_ORDER, HAND_PAUSE_MS, HOLE_CARD_COUNT, MAX_CHIPS, MAX_HISTORY_HANDS, MAX_NOTE_LENGTH, MAX_SEATS, MAX_SPECIAL_HANDS, MAX_TABLE_NAME_LENGTH, RABBIT_SHOW_MS, RUN_VOTE_SEC, MIN_PLAYERS_TO_START, MODE_INTRO_TIMEOUT_SEC, MAX_PIGGY_GAMES, PIGGY_CELEBRATION_MS, PIGGY_TARGET_WINS, RUNOUT_STEP_MS, TIME_BANK_MAX_SEC, TIME_BANK_MIN_SEC, TIME_BANK_SAVED_RATIO, SUIT_SYMBOLS, VARIANT_LABELS } from '../shared/constants';
 import { formatMoney } from '../shared/money';
 import { handsLabel } from '../shared/plural';
 import { computeCashout, isChipEntry, type Cashout } from '../shared/settlement';
@@ -58,6 +58,8 @@ export interface TablePlayer {
   departure: { note: string; byName: string | null } | null;
   camera: boolean;
   microphone: boolean;
+  /** Od štartu tejto hry už bol rozdaný (alebo losoval o button) — miesto si zmení až po návrate stola do čakárne. */
+  seatLocked: boolean;
 }
 
 export type Result<T = undefined> = { ok: true; data?: T } | { ok: false; error: string };
@@ -131,6 +133,8 @@ export interface PersistedPlayer {
   timeBankMs?: number;
   leaving: boolean;
   departure: { note: string; byName: string | null } | null;
+  /** Staršie súbory ho nemajú → zamknuté, ak stôl práve hrá. */
+  seatLocked?: boolean;
 }
 
 /** Interný stav módu Prasiatko — `PiggyView` + vstupy práve rozdanej ruky (kvôli zrušeniu ruky po reštarte). */
@@ -145,9 +149,21 @@ export interface PiggyState {
   winners: { playerId: string; playerName: string; amount: number }[];
   /** Vstupy zaplatené pri rozdaní ruky `handNumber`; po jej dohraní null. */
   handEntries: { handNumber: number; entries: Record<string, number> } | null;
+  series: PiggySeries;
 }
 
-/** Uložené Prasiatko — ukladá sa len bežiace (`finished` sa po reštarte nezobrazuje). */
+/**
+ * Séria hier Prasiatka: `games` = koľko hier host spustil (pri `permanent` 1), `remaining` = koľko ešte zostáva vrátane
+ * bežiacej, `permanent` = ďalšie hry do vypnutia, `stopping` = po dohraní tejto hry sa ďalšia nespustí.
+ */
+export interface PiggySeries {
+  games: number;
+  remaining: number;
+  permanent: boolean;
+  stopping: boolean;
+}
+
+/** Uložené Prasiatko — ukladá sa len bežiace (`finished` sa po reštarte nezobrazuje; pri pokračujúcej sérii sa uloží už ďalšia hra). */
 export interface PersistedPiggy {
   amount: number;
   entry: number;
@@ -155,6 +171,17 @@ export interface PersistedPiggy {
   wins: Record<string, number>;
   contributed: Record<string, number>;
   startedAtHand: number;
+  /** Séria (staršie súbory polia nemajú → jediná hra). */
+  games?: number;
+  remaining?: number;
+  permanent?: boolean;
+  stopping?: boolean;
+}
+
+/** Karty a výsledok každého rozdaného hráča v jednej dohranej ruke — na sieť ide len vlastníkovi (`history:mine`). */
+export interface HoleHistoryHand {
+  handNumber: number;
+  players: Record<string, Omit<MyHandRecord, 'handNumber'>>;
 }
 
 export const SNAPSHOT_VERSION = 1;
@@ -200,6 +227,8 @@ export interface TableSnapshot {
   departed?: PersistedPlayer[];
   /** Overiteľné miešanie: čakajúce kolo a dôkazy rozdaných rúk (staršie súbory pole nemajú). */
   fair?: PersistedFair;
+  /** Karty hráčov v dohraných rukách pre `history:mine` (staršie súbory pole nemajú). */
+  holeHistory?: HoleHistoryHand[];
 }
 
 /** Kto koľko zaplatil za odkrytie boardu — pri návrate do čakárne sa to vráti. */
@@ -238,6 +267,8 @@ export class Table {
   createdAt = Date.now();
   returnToLobbyPending = false;
   readonly history: HandHistoryEntry[] = [];
+  /** Karty každého rozdaného hráča v posledných MAX_HISTORY_HANDS rukách — nikdy sa nevysielajú všetkým. */
+  private readonly holeHistory: HoleHistoryHand[] = [];
   readonly records = new Map<string, PlayerRecord>();
   settings: TableSettings;
   nextHand: NextHandOverride | null = null;
@@ -253,6 +284,8 @@ export class Table {
   readonly ledger: LedgerEntry[] = [];
   engine: HandEngine | null = null;
   lastResult: HandResultView | null = null;
+  /** Víťazi poslednej dohranej ruky (výhra > 0) — ostávajú aj po rozdaní ďalšej ruky, kým sa nedohrá (jukebox). */
+  private lastWinners: { handNumber: number; playerIds: string[] } | null = null;
   lastActivity = Date.now();
   private handNumber = 0;
   private lastDealerSeat = -1;
@@ -344,6 +377,7 @@ export class Table {
       timeBankMs: clampTimeBank(this.settings.timeBankSec * 1000),
       leaving: false,
       departure: null,
+      seatLocked: false,
       camera: false,
       microphone: false,
     };
@@ -543,6 +577,10 @@ export class Table {
       return { ok: false, error: TABLE_FULL_ON_RETURN };
     }
     this.departed.delete(member.id);
+    if (seat !== member.seat) {
+      // Pôvodné miesto je obsadené a dostal náhodné — môže si vybrať iné, kým nedostane ruku.
+      member.seatLocked = false;
+    }
     member.seat = seat;
     this.players.set(member.id, member);
     this.applyReturnRules(member);
@@ -620,12 +658,35 @@ export class Table {
     this.changed();
   }
 
+  /**
+   * Presadnúť sa dá len na začiatku hry (čakáreň, losovanie o button pred jeho rozhodnutím) alebo kým nový hráč
+   * ešte nedostal žiadnu ruku. Kto už v tejto hre hral, sedí až do návratu do čakárne.
+   */
+  private seatChangeBlock(player: TablePlayer): string | null {
+    if (this.isInHand(player.id)) {
+      return 'Miesto môžeš zmeniť až po skončení ruky';
+    }
+    if (this.phase === 'draw' && this.draw?.stage === 'done') {
+      return 'Dealer button je už rozhodnutý — miesta sa nemenia';
+    }
+    if (player.seatLocked) {
+      return 'Počas hry sa presadiť nedá — miesto sa mení len na začiatku hry';
+    }
+    return null;
+  }
+
+  private canChangeSeat(playerId: string): boolean {
+    const player = this.players.get(playerId);
+    return !!player && this.seatChangeBlock(player) === null;
+  }
+
   changeSeat(player: TablePlayer, seat: number): Result {
     if (!Number.isInteger(seat) || seat < 0 || seat >= MAX_SEATS) {
       return { ok: false, error: 'Neplatné miesto' };
     }
-    if (this.isInHand(player.id)) {
-      return { ok: false, error: 'Miesto môžeš zmeniť až po skončení ruky' };
+    const blocked = this.seatChangeBlock(player);
+    if (blocked) {
+      return { ok: false, error: blocked };
     }
     if ([...this.players.values()].some((other) => other.seat === seat && other !== player)) {
       return { ok: false, error: 'Miesto je obsadené' };
@@ -749,7 +810,13 @@ export class Table {
       player.leaving = true;
       player.sittingOut = true;
       const enginePlayer = this.engine!.player(player.id);
-      if (enginePlayer && enginePlayer.status !== 'folded' && this.engine!.toAct?.id === player.id) {
+      if (kicked) {
+        // Vyhodený hráč foldne hneď, aj keď nie je na ťahu (inak by mohol ešte vyhrať pot).
+        this.dropFromRunVote(player.id);
+        if (this.engine!.foldOut(player.id)) {
+          this.afterEngineChange();
+        }
+      } else if (enginePlayer && enginePlayer.status !== 'folded' && this.engine!.toAct?.id === player.id) {
         this.engine!.act(player.id, { type: 'fold' });
         this.afterEngineChange();
       }
@@ -764,6 +831,214 @@ export class Table {
     this.ensureSeatedBanker();
     this.changed();
     this.armTimers();
+  }
+
+  /**
+   * Host vyhodí ľubovoľného člena okrem seba a zakladateľa: sediaceho (v ruke hneď foldne), offline, odchádzajúceho aj
+   * člena, ktorý od stola odišiel. Jeho žetóny idú do ledgeru ako odchod (vyrovnajú sa v cashoute), token prestane platiť
+   * a pri návrate musí znova žiadať o prístup. Riadok v leaderboarde ostáva (neprítomný).
+   */
+  kickMember(actor: TablePlayer, targetId: unknown): Result {
+    if (!this.isAdmin(actor.id)) {
+      return { ok: false, error: 'Toto môže len host' };
+    }
+    const target = typeof targetId === 'string' ? this.member(targetId) : undefined;
+    if (!target || target.id === actor.id || isKicked(target)) {
+      return { ok: false, error: 'Neplatný hráč' };
+    }
+    if (this.isHost(target.id)) {
+      return { ok: false, error: 'Zakladateľa stola nemôžeš vyhodiť' };
+    }
+    this.fair.forget(target.id);
+    this.forgetApprovedJoins(target.id);
+    const seated = this.players.get(target.id) === target;
+    if (seated && !target.leaving) {
+      this.leave(target, true, actor.name);
+      return { ok: true };
+    }
+    target.departure = { note: KICK_NOTE, byName: actor.name };
+    this.adminIds.delete(target.id);
+    this.event('info', `${actor.name} vyhadzuje zo stola hráča ${target.name}`, target.id);
+    if (seated) {
+      // Odchádza po dohraní ruky: foldne hneď a po ruke ide cez `vacateSeat` → `removePlayer` (cash-out do ledgeru).
+      this.dropFromRunVote(target.id);
+      if (this.engine?.foldOut(target.id)) {
+        this.afterEngineChange();
+      }
+    } else {
+      // Člen, ktorý od stola odišiel: cash-out uložených žetónov, z členov zmizne nadobro.
+      this.removePlayer(target);
+      this.hooks.onRemoved(this, target, true);
+    }
+    this.syncIntro();
+    this.ensureSeatedAdmin();
+    this.ensureSeatedBanker();
+    this.changed();
+    this.armTimers();
+    return { ok: true };
+  }
+
+  /** Zabudne schválené žiadosti, ktoré odkazujú na hráča (vyhodený / zlúčený člen). */
+  private forgetApprovedJoins(playerId: string): void {
+    for (const [id, approved] of this.approvedJoins) {
+      if (approved.playerId === playerId) {
+        this.approvedJoins.delete(id);
+      }
+    }
+  }
+
+  /** Hráč vypadol z hlasovania o počte behov (vyhodenie) — rozhodne sa bez neho. */
+  private dropFromRunVote(playerId: string): void {
+    const vote = this.runVote;
+    if (!vote || !vote.participants.includes(playerId)) {
+      return;
+    }
+    vote.participants = vote.participants.filter((id) => id !== playerId);
+    delete vote.choices[playerId];
+    if (vote.participants.length < 2) {
+      this.finishRunVote();
+    } else {
+      this.syncRunVote();
+    }
+  }
+
+  /**
+   * Zlúči člena `from` do člena `to` (ten istý človek sa po páde hry pripojil z iného zariadenia ako nový hráč) — akoby
+   * `from` bol od začiatku `to`: žetóny, záznamy v ledgeri (aj ako protistrana a bankár), štatistiky, história rúk,
+   * moje karty, Prasiatko a roly prejdú na `to`; `from` zmizne bez zápisu odchodu (jeho žetóny sa presunuli).
+   * `to` si ponecháva miesto, timebank aj čakanie na big blind. Zlúčiť sa dá len offline hráč mimo rozdanej ruky.
+   */
+  mergeMember(actor: TablePlayer, fromId: unknown, toId: unknown): Result {
+    if (!this.isAdmin(actor.id)) {
+      return { ok: false, error: 'Toto môže len host' };
+    }
+    const from = typeof fromId === 'string' ? this.member(fromId) : undefined;
+    const to = typeof toId === 'string' ? this.member(toId) : undefined;
+    if (!from || !to || isKicked(from) || isKicked(to)) {
+      return { ok: false, error: 'Neplatný hráč' };
+    }
+    if (from === to) {
+      return { ok: false, error: 'Hráča nemôžeš zlúčiť so sebou samým' };
+    }
+    if (this.phase === 'draw') {
+      return { ok: false, error: 'Počas rozhodovania o dealer buttone sa hráči zlúčiť nedajú' };
+    }
+    if (from.sockets.size > 0) {
+      return { ok: false, error: `${from.name} je online — zlúčiť sa dá len offline hráč` };
+    }
+    if (from.leaving || this.isInHand(from.id)) {
+      return { ok: false, error: `${from.name} hrá rozdanú ruku — zlúčiť ho môžeš po jej skončení` };
+    }
+    const fromName = from.name;
+    const chips = from.stack + from.pendingChips;
+    this.players.delete(from.id);
+    this.departed.delete(from.id);
+    this.piggyShort.delete(from.id);
+    this.fair.forget(from.id);
+    this.forgetApprovedJoins(from.id);
+    if (chips > 0) {
+      if (this.players.get(to.id) === to) {
+        this.creditChips(to, chips);
+      } else {
+        to.stack += chips;
+      }
+    }
+    const rename = (name: string) => (name === fromName ? to.name : name);
+    for (const entry of this.ledger) {
+      if (entry.playerId === from.id) {
+        entry.playerId = to.id;
+        entry.playerName = to.name;
+      }
+      if (entry.toId === from.id) {
+        entry.toId = to.id;
+        entry.toName = to.name;
+      }
+      if (entry.bankerId === from.id) {
+        entry.bankerId = to.id;
+        entry.bankerName = to.name;
+      }
+      if (entry.byName !== null) {
+        entry.byName = rename(entry.byName);
+      }
+    }
+    const fromRecord = this.records.get(from.id);
+    if (fromRecord) {
+      const toRecord = this.records.get(to.id) ?? { id: to.id, name: to.name, avatar: to.avatar, handsPlayed: 0, handsWon: 0, biggestPot: 0 };
+      toRecord.handsPlayed += fromRecord.handsPlayed;
+      toRecord.handsWon += fromRecord.handsWon;
+      toRecord.biggestPot = Math.max(toRecord.biggestPot, fromRecord.biggestPot);
+      this.records.set(to.id, toRecord);
+      this.records.delete(from.id);
+    }
+    for (const entry of this.history) {
+      entry.winners = mergeRows(entry.winners, from.id, to.id, to.name);
+      entry.dealerName = rename(entry.dealerName);
+      if (entry.bounty) {
+        entry.bounty.winnerName = rename(entry.bounty.winnerName);
+      }
+      if (entry.piggy) {
+        entry.piggy.winners = mergeRows(entry.piggy.winners, from.id, to.id, to.name);
+      }
+    }
+    for (const hand of this.holeHistory) {
+      const moved = hand.players[from.id];
+      if (!moved) {
+        continue;
+      }
+      delete hand.players[from.id];
+      const own = hand.players[to.id];
+      // Obaja boli rozdaní v tej istej ruke: ostávajú karty cieľového hráča, výsledky sa sčítajú.
+      hand.players[to.id] = own ? { ...own, net: own.net + moved.net } : moved;
+    }
+    const piggy = this.piggy;
+    if (piggy) {
+      if (piggy.wins[from.id] !== undefined) {
+        piggy.wins[to.id] = Math.min(piggy.target, (piggy.wins[to.id] ?? 0) + piggy.wins[from.id]);
+        delete piggy.wins[from.id];
+      }
+      if (piggy.contributed[from.id] !== undefined) {
+        piggy.contributed[to.id] = (piggy.contributed[to.id] ?? 0) + piggy.contributed[from.id];
+        delete piggy.contributed[from.id];
+      }
+      piggy.winners = mergeRows(piggy.winners, from.id, to.id, to.name);
+    }
+    for (const entry of [...this.pendingAnte, ...this.handAnte]) {
+      if (entry.playerId === from.id) {
+        entry.playerId = to.id;
+      }
+    }
+    if (this.lastWinners) {
+      this.lastWinners.playerIds = [...new Set(this.lastWinners.playerIds.map((id) => (id === from.id ? to.id : id)))];
+    }
+    for (const event of this.events) {
+      if (event.playerId === from.id) {
+        event.playerId = to.id;
+      }
+    }
+    if (this.firstDealerId === from.id) {
+      this.firstDealerId = null;
+    }
+    if (this.hostId === from.id) {
+      this.hostId = to.id;
+    }
+    if (this.adminIds.delete(from.id) || this.hostId === to.id) {
+      this.adminIds.add(to.id);
+    }
+    if (this.bankerId === from.id) {
+      this.bankerId = to.id;
+    }
+    if (this.modeIntro) {
+      this.modeIntro.participants = this.modeIntro.participants.filter((id) => id !== from.id);
+      this.modeIntro.acknowledged = this.modeIntro.acknowledged.filter((id) => id !== from.id);
+    }
+    this.event('host', `Host ${actor.name} zlučuje hráča ${fromName} do ${to.name} (presunutých ${this.money(chips)})`, to.id);
+    this.syncIntro();
+    this.ensureSeatedAdmin();
+    this.ensureSeatedBanker();
+    this.changed();
+    this.armTimers();
+    this.maybeScheduleNextHand();
+    return { ok: true };
   }
 
   act(player: TablePlayer, action: PlayerAction): Result {
@@ -981,25 +1256,31 @@ export class Table {
   }
 
   /**
-   * Špeciálne kolo = variant na `hands` kôl za sebou (predvolene 1) od ďalšej ruky; `sevenDeuce` sa ignoruje (7-2 sa zapína
-   * natrvalo v nastaveniach). Vyhlásenie, zmena počtu kôl aj zrušenie idú všetkým ako upozornenie (`mode`).
+   * Špeciálne kolo = variant na `hands` kôl za sebou (predvolene 1) od ďalšej ruky, alebo `permanent` — natrvalo, kým ho
+   * host nevypne (`hands` sa vtedy ignoruje a neodpočítava). `sevenDeuce` sa ignoruje (7-2 sa zapína natrvalo v nastaveniach).
+   * Vyhlásenie, zmena počtu kôl / prepnutie natrvalo aj zrušenie idú všetkým ako upozornenie (`mode`).
    */
   hostNextHand(override: NextHandOverride | null): Result {
     if (override && override.variant !== undefined && !isVariant(override.variant)) {
       return { ok: false, error: 'Neznámy variant' };
     }
+    const permanent = override?.permanent === true;
     const hands = override?.hands ?? 1;
-    if (!Number.isInteger(hands) || hands < 1 || hands > MAX_SPECIAL_HANDS) {
+    if (!permanent && (!Number.isInteger(hands) || hands < 1 || hands > MAX_SPECIAL_HANDS)) {
       return { ok: false, error: `Počet kôl musí byť 1 až ${MAX_SPECIAL_HANDS}` };
     }
     const previous = this.nextHand;
     const variant = override?.variant;
-    this.nextHand = variant ? { variant, hands } : null;
+    this.nextHand = variant ? (permanent ? { variant, permanent: true } : { variant, hands }) : null;
     const live = this.engine && !this.engine.isComplete ? this.specialInHand : null;
     if (variant && previous?.variant === variant) {
-      if ((previous.hands ?? 1) !== hands) {
+      if (permanent && !previous.permanent) {
+        this.event('mode', `Host mení špeciálne kolo: ${VARIANT_LABELS[variant]} natrvalo — do vypnutia hostom`);
+      } else if (!permanent && (previous.permanent || (previous.hands ?? 1) !== hands)) {
         this.event('mode', `Host mení špeciálne kolo: ${VARIANT_LABELS[variant]} ešte ${handsLabel(hands)}${live ? ' po tejto ruke' : ''}`);
       }
+    } else if (variant && permanent) {
+      this.event('mode', `Host vyhlasuje špeciálne kolo: ${VARIANT_LABELS[variant]} natrvalo od ďalšej ruky`);
     } else if (variant) {
       this.event('mode', `Host vyhlasuje špeciálne kolo: ${VARIANT_LABELS[variant]} na ${handsLabel(hands)} od ďalšej ruky`);
     } else if (previous?.variant) {
@@ -1247,18 +1528,24 @@ export class Table {
   }
 
   /**
-   * Mód Prasiatko. `start`: od najbližšej rozdanej ruky dá každý rozdaný hráč vstup (BB v čase štartu) do prasiatka;
-   * pred prvou takou rukou sa ukážu pravidlá. `cancel`: každý prítomný dostane späť svoje vstupy, vstupy hráčov, ktorí
-   * odišli, sa rovnomerne rozdelia medzi prítomných prispievateľov (zvyšný cent prvému vľavo od buttonu).
+   * Mód Prasiatko. `start`: od najbližšej rozdanej ruky dá každý rozdaný hráč vstup (BB v čase štartu hry) do prasiatka;
+   * pred prvou takou rukou sa ukážu pravidlá. `games` hier za sebou (predvolene 1) alebo `permanent` — po dohraní hry sa
+   * po oslave sama spustí ďalšia (pravidlá sa už neukazujú). `stop`: bežiaca hra sa dohrá, ďalšia sa nespustí.
+   * `cancel`: každý prítomný dostane späť svoje vstupy, vstupy hráčov, ktorí odišli, sa rovnomerne rozdelia medzi
+   * prítomných prispievateľov (zvyšný cent prvému vľavo od buttonu) a séria končí. Holý reťazec akcie = príkaz bez parametrov.
    */
-  hostPiggy(action: 'start' | 'cancel'): Result {
-    if (action === 'start') {
-      return this.startPiggy();
+  hostPiggy(command: PiggyCommand | PiggyCommand['action']): Result {
+    const piggyCommand = (typeof command === 'string' ? { action: command } : command) as PiggyCommand;
+    switch (piggyCommand?.action) {
+      case 'start':
+        return this.startPiggy(piggyCommand.games, piggyCommand.permanent);
+      case 'stop':
+        return this.stopPiggy();
+      case 'cancel':
+        return this.cancelPiggy();
+      default:
+        return { ok: false, error: 'Neplatná voľba' };
     }
-    if (action === 'cancel') {
-      return this.cancelPiggy();
-    }
-    return { ok: false, error: 'Neplatná voľba' };
   }
 
   /** Hráč potvrdzuje pravidlá módu pred jeho prvou rukou („Rozumiem“). */
@@ -1453,6 +1740,11 @@ export class Table {
   }
 
   /** Plný pohľad (testy, demo) — na sieť ide `liveView` + `meta` zvlášť. */
+  /** Víťazi poslednej dohranej ruky (výhra > 0); null, kým sa v tejto relácii servera žiadna ruka nedohrala. */
+  lastHandWinners(): { handNumber: number; playerIds: string[] } | null {
+    return this.lastWinners;
+  }
+
   view(viewerId: string): TableView {
     return { ...this.liveView(viewerId), ledger: this.ledger, history: this.history, leaderboard: this.leaderboard() };
   }
@@ -1534,6 +1826,7 @@ export class Table {
       bankerId: this.bankerId,
       createdAt: this.createdAt,
       youId: viewerId,
+      canChangeSeat: this.canChangeSeat(viewerId),
       settings: this.settings,
       nextHand: this.nextHand,
       running: this.running,
@@ -1573,6 +1866,7 @@ export class Table {
       modeIntro: this.modeIntro
         ? { ...this.modeIntro, participants: [...this.modeIntro.participants], acknowledged: [...this.modeIntro.acknowledged] }
         : null,
+      departed: [...this.departed.values()].map((member) => ({ id: member.id, name: member.name, avatar: member.avatar, stack: member.stack + member.pendingChips })),
       joinRequests: [...this.joinRequests.values()].map(({ id, name, avatar, at }) => ({ id, name, avatar, at })),
     };
   }
@@ -1820,6 +2114,7 @@ export class Table {
       this.record('leave', player, -chips, null, departure.note, departure.byName, false, { settlement: 'owed', bankerId: null, bankerName: null });
     }
     this.players.delete(player.id);
+    this.departed.delete(player.id);
     this.piggyShort.delete(player.id);
     if (this.piggy?.status === 'running') {
       delete this.piggy.wins[player.id];
@@ -1840,6 +2135,7 @@ export class Table {
       contributed: { ...piggy.contributed },
       startedAtHand: piggy.startedAtHand,
       winners: piggy.winners.map((winner) => ({ ...winner })),
+      series: { remaining: piggy.series.remaining, permanent: piggy.series.permanent, stopping: piggy.series.stopping, total: piggy.series.permanent ? 0 : piggy.series.games },
     };
   }
 
@@ -1899,7 +2195,12 @@ export class Table {
     }
   }
 
-  private startPiggy(): Result {
+  private startPiggy(games: unknown = 1, permanent: unknown = false): Result {
+    const forever = permanent === true;
+    if (!forever && (typeof games !== 'number' || !Number.isInteger(games) || games < 1 || games > MAX_PIGGY_GAMES)) {
+      return { ok: false, error: `Počet hier musí byť 1 až ${MAX_PIGGY_GAMES}` };
+    }
+    const count = forever ? 1 : (games as number);
     if (this.phase === 'draw') {
       return { ok: false, error: 'Počas rozhodovania o dealer buttone sa Prasiatko nedá spustiť' };
     }
@@ -1907,11 +2208,27 @@ export class Table {
       return { ok: false, error: 'Prasiatko už beží' };
     }
     this.clearPiggyTimer();
+    if (this.piggy) {
+      // Nová séria počas oslavy pokračujúcej série — kto nemal na starý vstup, posúdi sa znova pri rozdaní.
+      this.releasePiggyShort();
+    }
+    this.piggy = this.newPiggyGame({ games: count, remaining: count, permanent: forever, stopping: false });
+    this.dealtModes.delete('piggy');
+    this.introDone.delete('piggy');
+    const span = forever ? ' natrvalo' : count > 1 ? ` na ${gamesLabel(count)} za sebou` : '';
+    this.event('mode', `Host spúšťa Prasiatko${span} — vstup ${this.money(this.piggy.entry)} do prasiatka pred každou rukou, prvý s ${PIGGY_TARGET_WINS} výhrami berie všetko`);
+    this.changed();
+    this.maybeScheduleNextHand();
+    return { ok: true };
+  }
+
+  /** Nová hra Prasiatka: vstup = aktuálny BB, krúžky od nuly pre hráčov, ktorí môžu dostať karty, prázdne prasiatko. */
+  private newPiggyGame(series: PiggySeries): PiggyState {
     const wins: Record<string, number> = {};
     for (const player of this.dealCandidates()) {
       wins[player.id] = 0;
     }
-    this.piggy = {
+    return {
       status: 'running',
       amount: 0,
       entry: this.settings.bigBlind,
@@ -1921,17 +2238,91 @@ export class Table {
       startedAtHand: this.handNumber + 1,
       winners: [],
       handEntries: null,
+      series,
     };
-    this.dealtModes.delete('piggy');
-    this.introDone.delete('piggy');
-    this.event('mode', `Host spúšťa Prasiatko — vstup ${this.money(this.piggy.entry)} do prasiatka pred každou rukou, prvý s ${PIGGY_TARGET_WINS} výhrami berie všetko`);
+  }
+
+  /** Po dohraní hry sa spustí ďalšia (séria na viac hier alebo natrvalo, ktorú host neukončil). */
+  private piggyContinues(piggy: PiggyState): boolean {
+    return !piggy.series.stopping && (piggy.series.permanent || piggy.series.remaining > 1);
+  }
+
+  /** Ďalšia hra série po dohranej hre `piggy` (bez vedľajších účinkov — aj pre uloženie počas oslavy). */
+  private followingPiggyGame(piggy: PiggyState): PiggyState {
+    const { series } = piggy;
+    return this.newPiggyGame({ ...series, remaining: series.permanent ? series.remaining : series.remaining - 1 });
+  }
+
+  /**
+   * Koniec oslavy dohranej hry (časovač alebo rozdanie ďalšej ruky — čo príde skôr): séria pokračuje novou hrou, inak
+   * Prasiatko končí. Pravidlá sa pri ďalšej hre série neukazujú — mód bol v minulej ruke (`dealtModes`).
+   */
+  private closePiggyGame(): void {
+    const piggy = this.piggy;
+    if (!piggy || piggy.status !== 'finished') {
+      return;
+    }
+    this.clearPiggyTimer();
+    if (!this.piggyContinues(piggy)) {
+      this.piggy = null;
+      if (piggy.series.permanent || piggy.series.games > 1) {
+        this.event('mode', 'Séria Prasiatka skončila');
+      }
+      this.releasePiggyShort();
+      return;
+    }
+    const next = this.followingPiggyGame(piggy);
+    this.piggy = next;
+    const { series } = next;
+    this.event('mode', `Prasiatko — ďalšia hra (${series.permanent ? 'natrvalo' : `${series.games - series.remaining + 1}/${series.games}`}), vstup ${this.money(next.entry)}`);
+    // Hráči, ktorí nemali na vstup minulej hry, môžu mať na nový (napr. nižší BB).
+    for (const id of [...this.piggyShort]) {
+      const player = this.players.get(id);
+      if (player && !player.leaving && player.sittingOut && player.stack > next.entry) {
+        this.fundedAgain(player);
+      }
+    }
+  }
+
+  /** Host ukončí sériu: bežiaca hra sa dohrá (počas oslavy sa už ďalšia nespustí), vstupy ostávajú v hre. */
+  private stopPiggy(): Result {
+    const piggy = this.piggy;
+    if (!piggy) {
+      return { ok: false, error: 'Prasiatko nebeží' };
+    }
+    if (piggy.series.stopping) {
+      return { ok: false, error: 'Prasiatko už končí po tejto hre' };
+    }
+    if (piggy.status === 'finished') {
+      if (!this.piggyContinues(piggy)) {
+        return { ok: false, error: 'Prasiatko už skončilo' };
+      }
+      this.endPiggySeries(piggy);
+      this.event('mode', 'Host ukončuje sériu Prasiatka — ďalšia hra sa nespustí');
+      this.changed();
+      return { ok: true };
+    }
+    piggy.series.stopping = true;
+    this.event('mode', 'Host ukončí Prasiatko po dohraní tejto hry — ďalšia sa už nespustí');
     this.changed();
-    this.maybeScheduleNextHand();
     return { ok: true };
+  }
+
+  /** Dohraná hra počas oslavy: ďalšia sa nespustí a hráči, ktorí nemali na vstup, sa vracajú do hry. */
+  private endPiggySeries(piggy: PiggyState): void {
+    piggy.series.stopping = true;
+    this.releasePiggyShort();
   }
 
   private cancelPiggy(): Result {
     const piggy = this.piggy;
+    if (piggy?.status === 'finished' && this.piggyContinues(piggy)) {
+      // Hra je už vyplatená — nie je čo vracať, len sa ukončí séria.
+      this.endPiggySeries(piggy);
+      this.event('mode', 'Host ruší sériu Prasiatka — ďalšia hra sa nespustí');
+      this.changed();
+      return { ok: true };
+    }
     if (!piggy || piggy.status !== 'running') {
       return { ok: false, error: 'Prasiatko nebeží' };
     }
@@ -2052,7 +2443,7 @@ export class Table {
     this.piggyTimer = setTimeout(() => {
       this.piggyTimer = null;
       if (this.piggy === piggy) {
-        this.piggy = null;
+        this.closePiggyGame();
         this.changed();
       }
     }, PIGGY_CELEBRATION_MS);
@@ -2347,6 +2738,12 @@ export class Table {
   /** Ukončí fázu losovania; prvá ruka sa rozdá s `dealerId` na buttone. */
   private beginPlaying(dealerId: string, delay: number): void {
     this.clearDrawTimer();
+    for (const id of this.draw?.participants ?? []) {
+      const participant = this.players.get(id);
+      if (participant) {
+        participant.seatLocked = true;
+      }
+    }
     this.phase = 'playing';
     this.draw = null;
     this.running = true;
@@ -2492,10 +2889,7 @@ export class Table {
     if (!this.fairReady()) {
       return;
     }
-    if (this.piggy?.status === 'finished') {
-      this.clearPiggyTimer();
-      this.piggy = null;
-    }
+    this.closePiggyGame();
     this.sitOutShortStacks();
     const eligible = this.eligiblePlayers();
     const returning = this.returningPlayers();
@@ -2529,6 +2923,7 @@ export class Table {
     this.introDone.clear();
     for (const seat of lineup.seats) {
       const player = this.players.get(seat.id)!;
+      player.seatLocked = true;
       if (player.sittingOut) {
         player.sittingOut = false;
         player.returnMode = null;
@@ -2539,8 +2934,12 @@ export class Table {
     this.handNumber += 1;
     const rules = this.buildRules();
     const special = this.nextHand?.variant ? this.nextHand : null;
-    const remaining = special ? (special.hands ?? 1) - 1 : 0;
-    this.nextHand = special && remaining > 0 ? { variant: special.variant, hands: remaining } : null;
+    // Natrvalo zapnutý variant sa neodpočítava — ostáva, kým ho host nevypne.
+    const remaining = special && !special.permanent ? (special.hands ?? 1) - 1 : 0;
+    if (!special?.permanent) {
+      this.nextHand = special && remaining > 0 ? { variant: special.variant, hands: remaining } : null;
+    }
+    const permanentContinues = !!special?.permanent && this.specialInHand === special.variant;
     if (this.specialInHand && !special) {
       this.event('mode', `Špeciálne kolo ${VARIANT_LABELS[this.specialInHand]} skončilo — znova sa hrá ${VARIANT_LABELS[this.settings.defaultVariant]}`);
     }
@@ -2575,7 +2974,11 @@ export class Table {
     if (ante > 0) {
       this.event('info', `V pote je ante ${this.money(ante)} z odkrytia boardu`);
     }
-    if (special) {
+    if (special?.permanent) {
+      if (!permanentContinues) {
+        this.event('host', `Špeciálne kolo: ${describeOverride(special)} — natrvalo, kým ho host nevypne`);
+      }
+    } else if (special) {
       this.event('host', `Špeciálne kolo: ${describeOverride(special)}${remaining > 0 ? ` — po tejto ruke ešte ${handsLabel(remaining)}` : ' — posledná ruka'}`);
     }
     this.engine.start();
@@ -2684,8 +3087,13 @@ export class Table {
     const result = engine.result!;
     this.handAnte = [];
     this.lastResult = { handNumber: engine.handNumber, ...result };
+    this.lastWinners = { handNumber: engine.handNumber, playerIds: [...new Set(result.winners.filter((winner) => winner.amount > 0).map((winner) => winner.playerId))] };
     this.recordHand(engine);
+    const settledPiggy = this.piggy;
     const piggyFinished = this.settlePiggy(engine);
+    if (piggyFinished) {
+      this.notePiggyInHistory(engine.handNumber, settledPiggy?.winners.length ? settledPiggy.winners : (this.piggy?.winners ?? []));
+    }
     for (const enginePlayer of engine.players) {
       const player = this.players.get(enginePlayer.id);
       if (!player) {
@@ -2703,7 +3111,7 @@ export class Table {
         this.event('info', `${player.name} nemá žetóny — čaká na dobitie od bankára`, player.id);
       }
     }
-    if (piggyFinished) {
+    if (piggyFinished && (!this.piggy || !this.piggyContinues(this.piggy))) {
       this.releasePiggyShort();
     }
     if (this.returnToLobbyPending) {
@@ -2761,6 +3169,37 @@ export class Table {
     if (this.history.length > MAX_HISTORY_HANDS) {
       this.history.splice(0, this.history.length - MAX_HISTORY_HANDS);
     }
+    // Moje karty v histórii: finálne karty (po zahodení v Pineapple), čistý výsledok bez Prasiatka a 7-2 bonusu.
+    const holes: HoleHistoryHand['players'] = {};
+    for (const enginePlayer of engine.players) {
+      const folded = enginePlayer.status === 'folded';
+      holes[enginePlayer.id] = {
+        cards: [...enginePlayer.hole],
+        net: (wonBy.get(enginePlayer.id)?.amount ?? 0) - (enginePlayer.total + enginePlayer.dead),
+        folded,
+        handDescription: !folded && !result.wonWithoutShowdown ? (enginePlayer.evaluated?.description ?? null) : null,
+      };
+    }
+    this.holeHistory.push({ handNumber: engine.handNumber, players: holes });
+    if (this.holeHistory.length > MAX_HISTORY_HANDS) {
+      this.holeHistory.splice(0, this.holeHistory.length - MAX_HISTORY_HANDS);
+    }
+  }
+
+  /** Prasiatko, ktoré sa rozhodlo v ruke `handNumber`, sa pripíše k jej záznamu v histórii (ide v ďalšom `table:meta`). */
+  private notePiggyInHistory(handNumber: number, winners: { playerId: string; playerName: string; amount: number }[]): void {
+    const entry = this.history.at(-1);
+    if (entry?.handNumber === handNumber && winners.length) {
+      entry.piggy = { winners: winners.map((winner) => ({ ...winner })) };
+    }
+  }
+
+  /** Moje karty a výsledok v dohraných rukách (od najstaršej) — len záznamy hráča `playerId`. */
+  myHistory(playerId: string): MyHandRecord[] {
+    return this.holeHistory.flatMap((hand) => {
+      const mine = hand.players[playerId];
+      return mine ? [{ handNumber: hand.handNumber, ...mine, cards: [...mine.cards] }] : [];
+    });
   }
 
   /** Hra skončila skôr, než sa ante z odkrytia boardu dostalo do ruky — vráti sa tým, čo ho zaplatili. */
@@ -2788,6 +3227,9 @@ export class Table {
     this.running = false;
     this.paused = false;
     this.returnToLobbyPending = false;
+    for (const member of [...this.players.values(), ...this.departed.values()]) {
+      member.seatLocked = false;
+    }
     this.engine = null;
     this.rabbit = null;
     this.clearRunVote();
@@ -2849,7 +3291,7 @@ export class Table {
           }
           for (const pending of onBreak) {
             if (engine.street === 'discard') {
-              engine.discard(pending.id, pending.hole.length - 1);
+              engine.autoDiscard(pending.id);
             }
           }
           this.afterEngineChange();
@@ -3002,7 +3444,8 @@ export class Table {
 
   toSnapshot(): TableSnapshot {
     const engine = this.engine && !this.engine.isComplete ? this.engine : null;
-    const piggy = this.piggy?.status === 'running' ? this.piggy : null;
+    // Počas oslavy dohranej hry sa pri pokračujúcej sérii ukladá už ďalšia hra (dohraná je vyplatená).
+    const piggy = this.piggy?.status === 'running' ? this.piggy : this.piggy && this.piggyContinues(this.piggy) ? this.followingPiggyGame(this.piggy) : null;
     const voidedEntries = engine && piggy?.handEntries?.handNumber === engine.handNumber ? piggy.handEntries.entries : {};
     const contributed = { ...(piggy?.contributed ?? {}) };
     for (const [id, amount] of Object.entries(voidedEntries)) {
@@ -3044,6 +3487,7 @@ export class Table {
           timeBankMs: player.timeBankMs,
           leaving: player.leaving,
           departure: player.departure,
+          seatLocked: player.seatLocked,
         };
       }),
       records: [...this.records.values()].map((record) => ({ ...record })),
@@ -3065,6 +3509,10 @@ export class Table {
             wins: { ...piggy.wins },
             contributed,
             startedAtHand: piggy.startedAtHand,
+            games: piggy.series.games,
+            remaining: piggy.series.remaining,
+            permanent: piggy.series.permanent,
+            stopping: piggy.series.stopping,
           }
         : null,
       dealtModes: engine && this.preHand ? [...this.preHand.dealtModes] : [...this.dealtModes],
@@ -3084,8 +3532,10 @@ export class Table {
         timeBankMs: member.timeBankMs,
         leaving: false,
         departure: null,
+        seatLocked: member.seatLocked,
       })),
       fair: this.fair.toPersisted(),
+      holeHistory: this.holeHistory.map((hand) => ({ handNumber: hand.handNumber, players: { ...hand.players } })),
     };
   }
 
@@ -3102,7 +3552,10 @@ export class Table {
     table.hostId = snapshot.hostId;
     const savedHands = snapshot.nextHand?.hands;
     const hands = typeof savedHands === 'number' && Number.isInteger(savedHands) && savedHands >= 1 && savedHands <= MAX_SPECIAL_HANDS ? savedHands : 1;
-    table.nextHand = snapshot.nextHand?.variant && isVariant(snapshot.nextHand.variant) ? { variant: snapshot.nextHand.variant, hands } : null;
+    const savedVariant = snapshot.nextHand?.variant;
+    table.nextHand = savedVariant && isVariant(savedVariant)
+      ? snapshot.nextHand?.permanent === true ? { variant: savedVariant, permanent: true } : { variant: savedVariant, hands }
+      : null;
     table.handNumber = snapshot.handNumber;
     table.lastDealerSeat = snapshot.lastDealerSeat;
     table.lastSmallBlindSeat = snapshot.lastSmallBlindSeat ?? -1;
@@ -3113,6 +3566,7 @@ export class Table {
     table.ledger.push(...snapshot.ledger);
     table.events.push(...snapshot.events);
     table.history.push(...snapshot.history);
+    table.holeHistory.push(...(snapshot.holeHistory ?? []).filter((hand) => Number.isInteger(hand?.handNumber) && !!hand.players && typeof hand.players === 'object').slice(-MAX_HISTORY_HANDS));
     table.fair.restore(snapshot.fair);
     for (const record of snapshot.records) {
       table.records.set(record.id, { ...record });
@@ -3129,6 +3583,7 @@ export class Table {
         startedAtHand: savedPiggy.startedAtHand,
         winners: [],
         handEntries: null,
+        series: restorePiggySeries(savedPiggy),
       };
     }
     table.dealtModes = new Set((snapshot.dealtModes ?? []).filter((mode) => GAME_MODES.includes(mode)));
@@ -3149,6 +3604,7 @@ export class Table {
         sockets: new Set(),
         camera: false,
         microphone: false,
+        seatLocked: saved.seatLocked ?? snapshot.phase === 'playing',
       };
       if (player.stack <= 0) {
         player.sittingOut = true;
@@ -3186,6 +3642,7 @@ export class Table {
         sockets: new Set(),
         camera: false,
         microphone: false,
+        seatLocked: saved.seatLocked ?? snapshot.phase === 'playing',
       });
     }
     for (const id of snapshot.adminIds) {
@@ -3212,6 +3669,11 @@ export class Table {
       table.phase = 'playing';
       table.running = true;
       table.paused = true;
+    } else {
+      // Stôl sa obnoví v čakárni — ako po `enterLobby` si každý môže znova vybrať miesto.
+      for (const member of [...table.players.values(), ...table.departed.values()]) {
+        member.seatLocked = false;
+      }
     }
     if (snapshot.handInProgress) {
       table.event('info', 'Server sa reštartoval — rozohraná ruka bola zrušená a žetóny vrátené');
@@ -3234,6 +3696,24 @@ function currentHandDescription(engine: HandEngine, hole: Card[]): string | null
   } catch {
     return null;
   }
+}
+
+/** Prepíše riadky výhercov z `fromId` na `toId`; keď v tej istej ruke vyhrali obaja, sumy sa spoja do jedného riadku. */
+function mergeRows<T extends { playerId: string; playerName: string; amount: number }>(rows: T[], fromId: string, toId: string, toName: string): T[] {
+  if (!rows.some((row) => row.playerId === fromId)) {
+    return rows;
+  }
+  const merged: T[] = [];
+  for (const row of rows) {
+    const current = row.playerId === fromId ? { ...row, playerId: toId, playerName: toName } : { ...row };
+    const existing = merged.find((other) => other.playerId === current.playerId);
+    if (existing) {
+      existing.amount += current.amount;
+    } else {
+      merged.push(current);
+    }
+  }
+  return merged;
 }
 
 /** Vyhodený hostom (aj staršie uložené súbory) — na rozdiel od dobrovoľného odchodu ide o cash-out a token neplatí. */
@@ -3261,6 +3741,19 @@ function compareDrawCards(left: Card, right: Card): number {
 
 function isVariant(value: unknown): value is Variant {
   return value === 'holdem' || value === 'omaha' || value === 'pineapple';
+}
+
+/** „1 hru“, „3 hry“, „5 hier“ (akuzatív — „na 3 hry za sebou“). */
+function gamesLabel(count: number): string {
+  return `${count} ${count === 1 ? 'hru' : count >= 2 && count <= 4 ? 'hry' : 'hier'}`;
+}
+
+/** Séria z uloženého Prasiatka; staršie súbory (bez polí) a nezmysly → jediná hra. */
+function restorePiggySeries(saved: PersistedPiggy): PiggySeries {
+  const permanent = saved.permanent === true;
+  const remaining = !permanent && Number.isInteger(saved.remaining) && saved.remaining! >= 1 && saved.remaining! <= MAX_PIGGY_GAMES ? saved.remaining! : 1;
+  const games = !permanent && Number.isInteger(saved.games) && saved.games! >= remaining && saved.games! <= MAX_PIGGY_GAMES ? saved.games! : remaining;
+  return { games, remaining, permanent, stopping: saved.stopping === true };
 }
 
 function describeOverride(override: NextHandOverride): string {

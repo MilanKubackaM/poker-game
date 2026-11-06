@@ -9,6 +9,7 @@ import type { Profile } from '../storage';
 import { AvatarPicker } from './AvatarPicker';
 import { MoneyInput } from './MoneyInput';
 import { MyTables } from './MyTables';
+import { VersionTag } from './UpdateBanner';
 
 /** Oznámenie na úvodnej obrazovke — napr. po odchode od stola alebo keď stôl niekto zmazal. */
 export interface LobbyNotice {
@@ -208,6 +209,9 @@ export function Lobby(props: LobbyProps) {
         </div>
         </>
       )}
+      <footer className="lobby-footer">
+        <VersionTag />
+      </footer>
     </div>
   );
 }

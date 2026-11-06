@@ -1,0 +1,347 @@
+/* ===== Jukebox: tlačidlo v hornej lište, panel s frontom a skryté YouTube prehrávače ===== */
+
+/* Prehrávač musí byť v DOM-e a aspoň 200×200 px (nie display:none), inak YouTube nehrá — preto mimo obrazovky. */
+.jukebox-offscreen {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  width: 200px;
+  height: 200px;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.jukebox-offscreen iframe {
+  width: 200px;
+  height: 200px;
+  border: 0;
+}
+
+.jukebox-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.jukebox-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 200px;
+  min-width: 0;
+}
+
+.jukebox-btn.off {
+  opacity: 0.55;
+}
+
+.jukebox-btn.playing {
+  border-color: rgba(232, 194, 110, 0.55);
+}
+
+.jukebox-btn.playing .jukebox-note {
+  color: var(--gold);
+  animation: jukebox-bounce 1.2s ease-in-out infinite;
+}
+
+.jukebox-btn.blocked {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 2px rgba(232, 194, 110, 0.35);
+}
+
+.jukebox-note {
+  display: inline-block;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.jukebox-btn-title {
+  display: block;
+  overflow: hidden;
+  min-width: 0;
+  max-width: 150px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+
+.jukebox-btn-title.scrolling {
+  text-overflow: clip;
+}
+
+.jukebox-marquee {
+  display: inline-block;
+  padding-left: 100%;
+  animation: jukebox-marquee 14s linear infinite;
+}
+
+@keyframes jukebox-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-100%);
+  }
+}
+
+@keyframes jukebox-bounce {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jukebox-btn-title.scrolling {
+    text-overflow: ellipsis;
+  }
+
+  .jukebox-marquee {
+    padding-left: 0;
+    animation: none;
+  }
+
+  .jukebox-btn.playing .jukebox-note {
+    animation: none;
+  }
+}
+
+.jukebox-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 60;
+  width: min(340px, calc(100vw - 24px));
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  background: var(--panel-solid, #121a16);
+  border: 1px solid var(--panel-border, var(--line));
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  text-align: left;
+  white-space: normal;
+}
+
+.jukebox-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.jukebox-panel-title {
+  font-weight: 800;
+  color: var(--gold);
+}
+
+.jukebox-badge {
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.jukebox-badge.on {
+  border-color: rgba(46, 163, 107, 0.7);
+  color: #8ee0b5;
+}
+
+.jukebox-switch {
+  padding: 10px 12px;
+}
+
+.jukebox-hint,
+.jukebox-error {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.35;
+}
+
+.jukebox-hint {
+  color: var(--muted);
+}
+
+.jukebox-error {
+  color: #ff9c9c;
+}
+
+.jukebox-now {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--line);
+}
+
+.jukebox-now-title {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.jukebox-meta {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.jukebox-progress {
+  height: 4px;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.jukebox-progress-fill {
+  height: 100%;
+  background: var(--gold);
+  transition: width 1s linear;
+}
+
+.jukebox-times {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.jukebox-resume {
+  margin-top: 6px;
+  align-self: flex-start;
+}
+
+.jukebox-section-title {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.jukebox-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--gold);
+}
+
+.jukebox-queue ol {
+  margin: 0;
+  padding-left: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.jukebox-queue li {
+  font-size: 0.9rem;
+}
+
+.jukebox-queue li::marker {
+  color: var(--gold);
+  font-weight: 700;
+}
+
+.jukebox-queue-title {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.jukebox-add {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.jukebox-add-row {
+  display: flex;
+  gap: 6px;
+}
+
+.jukebox-add-row input {
+  flex: 1;
+  min-width: 0;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  padding: 9px 11px;
+  color: var(--text);
+  font-size: 1rem;
+}
+
+.jukebox-add-row input:focus {
+  outline: 2px solid rgba(232, 194, 110, 0.6);
+  outline-offset: 0;
+}
+
+.jukebox-volume {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.jukebox-volume input[type='range'] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--gold);
+}
+
+.jukebox-mute {
+  flex: none;
+  width: 36px;
+  height: 36px;
+}
+
+.jukebox-mute:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.jukebox-volume-value {
+  min-width: 3.2em;
+  text-align: right;
+  font-size: 0.85rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Úzke obrazovky: v lište len ikonka, panel cez celú šírku pod lištou. */
+@media (max-width: 760px) {
+  .jukebox-btn-title {
+    display: none;
+  }
+
+  .jukebox-btn {
+    padding: 7px 10px;
+  }
+
+  .jukebox-panel {
+    position: fixed;
+    top: 88px;
+    left: 12px;
+    right: 12px;
+    width: auto;
+    max-height: calc(100dvh - 110px);
+  }
+}
+
+@media (max-width: 420px) {
+  .topbar-right .jukebox-btn {
+    padding: 6px 9px;
+    min-height: 32px;
+  }
+}

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { LedgerEntry, SeatPlayerView, Settlement, TableSettings, TableView } from '../../../shared/types';
+import type { DepartedMemberView, LedgerEntry, SeatPlayerView, Settlement, TableSettings, TableView } from '../../../shared/types';
 import { formatMoney, parseMoney } from '../../../shared/money';
 import { centsToText } from '../moneyRules';
 import { bankerIdOf, isAdminId, isOwner } from '../roles';
@@ -8,8 +8,9 @@ import type { BankActions, HostActions } from './HostPanel';
 import { computeCashout } from '../../../shared/settlement';
 import { PlayerMoneyHistory } from './MoneyHistory';
 import { MoneyInput } from './MoneyInput';
+import { MergeDialog, canKick, isSeated, mergeBlockReason } from './SeatMenu';
 
-type AdminActions = Pick<HostActions, 'kick' | 'setAdmin' | 'setBanker'>;
+type AdminActions = Pick<HostActions, 'kick' | 'merge' | 'setAdmin' | 'setBanker'>;
 
 /** Kto je kto pri stole: ja, vlastník stola, bankár, ostatní s právami hosta. */
 export interface PlayerRoles {
@@ -163,12 +164,17 @@ export function useDebts(view: TableView): Map<string, number> {
   }, [ledger, leaderboard]);
 }
 
-/** Tlačidlo „Akcie“ vpravo hore na karte hráča: práva hosta, bankár, vyhodenie (len pre hosta). */
-export function PlayerActionsMenu({ player, actions, roles }: { player: SeatPlayerView; actions: AdminActions; roles: PlayerRoles }) {
+/**
+ * Tlačidlo „Akcie“ vpravo hore na karte hráča: práva hosta, bankár, zlúčenie, vyhodenie (len pre hosta).
+ * Pri členovi, ktorý odišiel od stola, ostáva len zlúčenie a vyhodenie.
+ */
+export function PlayerActionsMenu({ player, view, actions, roles }: { player: SeatPlayerView | DepartedMemberView; view: TableView; actions: AdminActions; roles: PlayerRoles }) {
   const [open, setOpen] = useState(false);
+  const [merging, setMerging] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const isSelf = player.id === roles.youId;
   const isOwner = player.id === roles.ownerId;
+  const seated = isSeated(player);
 
   useEffect(() => {
     if (!open) {
@@ -183,21 +189,25 @@ export function PlayerActionsMenu({ player, actions, roles }: { player: SeatPlay
     return () => document.removeEventListener('pointerdown', onDown);
   }, [open]);
 
-  const items: { key: string; label: string; danger?: boolean; run: () => void }[] = [];
-  if (!isSelf && !isOwner) {
+  const items: { key: string; label: string; hint?: string; danger?: boolean; disabled?: boolean; run: () => void }[] = [];
+  if (seated && !isSelf && !isOwner) {
     items.push(
       roles.isAdmin(player.id)
         ? { key: 'admin', label: 'Odobrať práva hosta', run: () => actions.setAdmin(player.id, false) }
         : { key: 'admin', label: '★ Dať práva hosta', run: () => actions.setAdmin(player.id, true) },
     );
   }
-  if (isSelf && !isOwner) {
+  if (seated && isSelf && !isOwner) {
     items.push({ key: 'admin', label: 'Vzdať sa práv hosta', run: () => actions.setAdmin(player.id, false) });
   }
-  if (player.id !== roles.bankerId) {
+  if (seated && player.id !== roles.bankerId) {
     items.push({ key: 'banker', label: '🏦 Označiť ako bankára', run: () => actions.setBanker(player.id) });
   }
-  if (!isSelf && !isOwner) {
+  if (!isSelf) {
+    const reason = mergeBlockReason(view, player.id);
+    items.push({ key: 'merge', label: '🔀 Zlúčiť do…', hint: reason ?? undefined, disabled: !!reason, run: () => setMerging(true) });
+  }
+  if (canKick(view, player.id)) {
     items.push({ key: 'kick', label: 'Vyhodiť', danger: true, run: () => actions.kick(player.id) });
   }
   if (items.length === 0) {
@@ -217,16 +227,20 @@ export function PlayerActionsMenu({ player, actions, roles }: { player: SeatPlay
               type="button"
               role="menuitem"
               className={item.danger ? 'menu-item danger' : 'menu-item'}
+              disabled={item.disabled}
+              title={item.hint}
               onClick={() => {
                 setOpen(false);
                 item.run();
               }}
             >
               {item.label}
+              {item.hint && <small>{item.hint}</small>}
             </button>
           ))}
         </div>
       )}
+      {merging && <MergeDialog view={view} fromId={player.id} onMerge={actions.merge} onClose={() => setMerging(false)} />}
     </div>
   );
 }
@@ -265,11 +279,33 @@ export function HostPlayersList({ view, actions, bank }: { view: TableView; acti
               </div>
               <div className="host-player-stack">{formatMoney(player.stack, view.settings.currency)}</div>
             </div>
-            {roles.youAreAdmin && <PlayerActionsMenu player={player} actions={actions} roles={roles} />}
+            {roles.youAreAdmin && <PlayerActionsMenu player={player} view={view} actions={actions} roles={roles} />}
           </div>
           <PlayerMoneySection player={player} view={view} ledger={view.ledger ?? []} debt={debts.get(player.id) ?? 0} bank={bank} handRunning={handRunning} />
         </div>
       ))}
+      {roles.youAreAdmin && (view.departed ?? []).length > 0 && (
+        <section className="stack-gap departed-section" aria-label="Odišli od stola">
+          <h3>Odišli od stola</h3>
+          <p className="departed-note">Žetóny majú uložené. Kto sa vrátil z iného zariadenia ako nový hráč, toho sem zlúč.</p>
+          {view.departed.map((member) => (
+            <div key={member.id} className="host-player">
+              <div className="host-player-head">
+                <AvatarBadge avatar={member.avatar} size={40} />
+                <div className="host-player-info">
+                  <div className="host-player-name">
+                    <RoleBadge playerId={member.id} roles={roles} />
+                    {member.name}
+                    <span className="badge badge-left">mimo stola</span>
+                  </div>
+                  <div className="host-player-stack">uložené {formatMoney(member.stack, view.settings.currency)}</div>
+                </div>
+                <PlayerActionsMenu player={member} view={view} actions={actions} roles={roles} />
+              </div>
+            </div>
+          ))}
+        </section>
+      )}
     </div>
   );
 }

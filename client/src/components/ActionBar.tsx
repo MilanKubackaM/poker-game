@@ -1,11 +1,15 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { Currency, HandView, LegalActions, PlayerAction, SeatPlayerView } from '../../../shared/types';
 import { formatMoney, parseMoney } from '../../../shared/money';
 import { centsToText } from '../moneyRules';
 import { secondsLabel, type TurnClock } from '../turnClock';
-import { resolvePreAction, type PreAction } from '../preActions';
+import { preActionOptions, resolvePreAction, type PreAction } from '../preActions';
 import { MoneyInput } from './MoneyInput';
 import { PlayingCard } from './PlayingCard';
+import '../actionBar.css';
+
+/** Ako dlho po začiatku môjho ťahu sa ignorujú kliky na akcie — ochrana pred preklikom z predvoľby. */
+const TURN_CLICK_GUARD_MS = 400;
 
 interface ActionBarProps {
   me: SeatPlayerView | null;
@@ -91,6 +95,28 @@ export function ActionBar({
       onAction(action);
     }
   }, [legal]);
+
+  // Ochrana pred preklikom: keď prídem na ťah, tlačidlá sa ~400 ms nedajú stlačiť (prst ešte mieri na predvoľbu).
+  // Kľúč ťahu sa mení len pri novom ťahu, nie pri posúvaní stávky; automatickú predvoľbu ochrana nebrzdí.
+  const turnKey = legal ? `${hand?.handNumber}:${hand?.street}:${legal.currentBet}:${legal.callAmount}` : null;
+  const turnStartRef = useRef(-Infinity);
+  const [guarded, setGuarded] = useState(false);
+  useLayoutEffect(() => {
+    if (turnKey === null) {
+      setGuarded(false);
+      return;
+    }
+    turnStartRef.current = performance.now();
+    setGuarded(true);
+    const timer = window.setTimeout(() => setGuarded(false), TURN_CLICK_GUARD_MS);
+    return () => window.clearTimeout(timer);
+  }, [turnKey]);
+  const act = (action: PlayerAction) => {
+    if (performance.now() - turnStartRef.current < TURN_CLICK_GUARD_MS) {
+      return;
+    }
+    onAction(action);
+  };
 
   const inHand = !!me?.inHand && me.status !== null;
   const discarding = hand?.street === 'discard' && inHand && me?.status !== 'folded' && !me?.hasDiscarded;
@@ -203,28 +229,19 @@ export function ActionBar({
       {hand?.street === 'discard' && me?.hasDiscarded && <div className="discard-box muted">Čakáme, kým ostatní zahodia kartu…</div>}
 
       {!legal && canPreAct && (
-        <div className="actions pre-actions" role="group" aria-label="Automatická akcia, keď prídeš na rad">
-          {(
-            [
-              { key: 'check', label: 'Check', enabled: toCall === 0, value: { kind: 'check' } },
-              { key: 'check-fold', label: toCall > 0 ? 'Fold' : 'Check / Fold', enabled: true, value: { kind: 'check-fold' } },
-              { key: 'call', label: toCall > 0 ? `Call ${money(toCall)}` : 'Call', enabled: toCall > 0, value: { kind: 'call', amount: toCall } },
-              { key: 'call-any', label: 'Call any', enabled: true, value: { kind: 'call-any' } },
-            ] satisfies { key: PreAction['kind']; label: string; enabled: boolean; value: PreAction }[]
-          ).map((option) => {
-            const active = preAction?.kind === option.key;
-            return (
-              <label key={option.key} className={['pre-action', active ? 'active' : '', option.enabled ? '' : 'disabled'].filter(Boolean).join(' ')}>
-                <input
-                  type="checkbox"
-                  checked={active}
-                  disabled={!option.enabled}
-                  onChange={(event) => setPreAction(event.target.checked ? option.value : null)}
-                />
-                <span>{option.label}</span>
-              </label>
-            );
-          })}
+        <div className="actions">
+          {/* Predvoľby sú v tých istých slotoch ako skutočné akcie (Fold | Check/Call | Bet/Raise) — po prepnutí na môj ťah sa nič nepohne. */}
+          <div className="action-buttons pre-actions" role="group" aria-label="Automatická akcia, keď prídeš na rad">
+            {preActionOptions(toCall, me?.stack ?? 0, money).map((option) => {
+              const active = preAction?.kind === option.value.kind;
+              return (
+                <label key={option.slot} className={`pre-action action-${option.tone}${active ? ' active' : ''}`}>
+                  <input type="checkbox" checked={active} onChange={(event) => setPreAction(event.target.checked ? option.value : null)} />
+                  <span>{option.label}</span>
+                </label>
+              );
+            })}
+          </div>
         </div>
       )}
       {legal && (
@@ -288,26 +305,26 @@ export function ActionBar({
               </div>
             </div>
           )}
-          <div className="action-buttons">
-            <button type="button" className="btn btn-fold" onClick={() => onAction({ type: 'fold' })}>
+          <div className={guarded ? 'action-buttons guarded' : 'action-buttons'} aria-busy={guarded || undefined}>
+            <button type="button" className="btn btn-fold action-fold" onClick={() => act({ type: 'fold' })}>
               Fold
             </button>
             {legal.canCheck ? (
-              <button type="button" className="btn btn-call" onClick={() => onAction({ type: 'check' })}>
+              <button type="button" className="btn btn-call action-call" onClick={() => act({ type: 'check' })}>
                 Check
               </button>
             ) : (
-              <button type="button" className="btn btn-call" onClick={() => onAction({ type: 'call' })}>
+              <button type="button" className={legal.callAmount >= (me?.stack ?? 0) ? 'btn btn-call action-allin' : 'btn btn-call action-call'} onClick={() => act({ type: 'call' })}>
                 {legal.callAmount >= (me?.stack ?? 0) ? 'All-in' : 'Call'} {money(legal.callAmount)}
               </button>
             )}
             {(legal.canBet || legal.canRaise) && (
               <button
                 type="button"
-                className="btn btn-raise"
+                className={raiseIsAllIn ? 'btn btn-raise action-allin' : 'btn btn-raise action-raise'}
                 disabled={!raiseTextValid}
                 onClick={() =>
-                  onAction(
+                  act(
                     raiseIsAllIn
                       ? { type: 'allin' }
                       : {

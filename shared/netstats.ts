@@ -24,7 +24,14 @@ const MAX_LINK_EVENTS = 20;
 export type NetLimit = 'none' | 'cpu' | 'bandwidth' | 'other';
 export const ICE_STATES = ['new', 'checking', 'connected', 'completed', 'disconnected', 'failed', 'closed'] as const;
 export type IceState = (typeof ICE_STATES)[number];
-export type NetIceEvent = IceState | 'restart';
+/**
+ * Udalosti obnovy spojenia (watchdog mesh siete): `session` = ponúkajúci začal novú reláciu, `reset` = odpovedajúci si
+ * vyžiadal novú ponuku, `stuck` = spojenie sa nenadviazalo, `silent` / `silent-out` = neprichádza / neodchádza zvuk pri
+ * zapnutom mikrofóne, `signal-error` = server signál nedoručil (ack s chybou alebo bez odpovede).
+ */
+export const RECOVERY_EVENTS = ['session', 'reset', 'stuck', 'silent', 'silent-out', 'signal-error'] as const;
+export type NetRecoveryEvent = (typeof RECOVERY_EVENTS)[number];
+export type NetIceEvent = IceState | 'restart' | NetRecoveryEvent;
 
 /** Spojenie s jedným protihráčom za posledný interval (rýchlosti sú priemery za interval, počítadlá sú rozdiely). */
 export interface NetLinkSample {
@@ -335,7 +342,7 @@ function compact<T extends object>(value: T): T {
 const KBPS_MAX = 200_000;
 const MS_MAX = 60_000;
 const LIMITS: readonly NetLimit[] = ['none', 'cpu', 'bandwidth', 'other'];
-const EVENT_KINDS: readonly NetIceEvent[] = [...ICE_STATES, 'restart'];
+const EVENT_KINDS: readonly NetIceEvent[] = [...ICE_STATES, 'restart', ...RECOVERY_EVENTS];
 
 function sanitizeLink(raw: unknown): NetLinkSample | null {
   if (!raw || typeof raw !== 'object') {
@@ -577,6 +584,12 @@ const ICE_TEXT: Record<NetIceEvent, string> = {
   failed: 'spojenie: zlyhalo',
   closed: 'spojenie: zatvorené',
   restart: 'spojenie: reštart (ICE)',
+  session: 'obnova: nová relácia (ponuka)',
+  reset: 'obnova: žiadosť o novú ponuku',
+  stuck: 'obnova: spojenie sa nenadviazalo',
+  silent: 'obnova: neprichádza zvuk',
+  'silent-out': 'obnova: neodchádza zvuk',
+  'signal-error': 'signalizácia: správa nedoručená',
 };
 
 function bucketSize(from: number, to: number, maxPoints: number): number {

@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { Card, SeatPlayerView, TableView } from '../../../shared/types';
-import { DISCARD_TIMEOUT_SEC, MAX_SPECIAL_HANDS, MODE_INTRO_TIMEOUT_SEC, PIGGY_TARGET_WINS, RABBIT_SHOW_MS, RUN_VOTE_SEC, TIME_BANK_MAX_SEC, VARIANT_LABELS } from '../../../shared/constants';
+import { DISCARD_TIMEOUT_SEC, JUKEBOX_MAX_DURATION_SEC, JUKEBOX_MAX_QUEUE, MAX_PIGGY_GAMES, MAX_SPECIAL_HANDS, MODE_INTRO_TIMEOUT_SEC, PIGGY_TARGET_WINS, RABBIT_SHOW_MS, RUN_VOTE_SEC, TIME_BANK_MAX_SEC, VARIANT_LABELS } from '../../../shared/constants';
 import { formatMoney } from '../../../shared/money';
-import { modeInfo, PiggyDots, type ModeInfo } from './GameModes';
+import { modeInfo, piggySeriesLabel, PiggyDots, specialRoundLabel, type ModeInfo } from './GameModes';
 import { RoleBadge, playerRoles, type PlayerRoles } from './HostPlayers';
 import { MicIcon } from './MicIcon';
 import { PlayingCard } from './PlayingCard';
@@ -264,7 +264,7 @@ function chapters(zoom: (src: string, alt: string) => void): Chapter[] {
       body: ({ view }) => (
         <>
           <ModeRules info={modeInfo('pineapple', view.settings, view.piggy ?? null)} />
-          <p className="help-note">Na krátkej pauze sa karta zahodí za teba hneď. Bez výberu sa po {DISCARD_TIMEOUT_SEC} s zahodí automaticky.</p>
+          <p className="help-note">Na krátkej pauze sa karta zahodí za teba hneď. Bez výberu sa po {DISCARD_TIMEOUT_SEC} s zahodí <strong>náhodná</strong> karta.</p>
           {shot('pineapple', 'Pineapple — výber karty na zahodenie', 'Pineapple: ťukni na kartu, ktorú zahodíš, a potvrď')}
         </>
       ),
@@ -279,11 +279,12 @@ function chapters(zoom: (src: string, alt: string) => void): Chapter[] {
           <Points
             items={[
               <>
-                Host môže počas hry vyhlásiť <strong>Omahu alebo Pineapple</strong> na jednu alebo viac nasledujúcich rúk (najviac {MAX_SPECIAL_HANDS}).
+                Host môže počas hry vyhlásiť <strong>Omahu alebo Pineapple</strong> na jednu alebo viac nasledujúcich rúk (najviac {MAX_SPECIAL_HANDS}) alebo <strong>natrvalo</strong> — vtedy sa hrá, kým ho host nevypne (od ďalšej ruky).
               </>,
               <>
-                V lište svieti <strong>„Ďalšia ruka: Omaha“</strong> a počas kola <strong>„Omaha · ešte 2 ruky“</strong>. Potom sa hra vráti k bežnému variantu.
+                V lište svieti <strong>„Ďalšia ruka: Omaha“</strong> a počas kola <strong>„Omaha · ešte 2 kolá“</strong> alebo <strong>„Omaha · natrvalo“</strong>. Potom sa hra vráti k bežnému variantu.
               </>,
+              <>Špeciálne kolo sa dá kombinovať s Prasiatkom aj s pravidlom 7-2.</>,
               <>
                 Pred prvou rukou nového módu sa všetkým ukážu jeho pravidlá. Ruka sa rozdá, keď všetci kliknú <strong>Rozumiem</strong> (najneskôr po {MODE_INTRO_TIMEOUT_SEC} s).
               </>,
@@ -296,7 +297,7 @@ function chapters(zoom: (src: string, alt: string) => void): Chapter[] {
       atTable: ({ view }) =>
         view.nextHand?.variant ? (
           <>
-            Naplánované: <strong>{VARIANT_LABELS[view.nextHand.variant]}</strong> od ďalšej ruky
+            Naplánované: <strong>{VARIANT_LABELS[view.nextHand.variant]}</strong> od ďalšej ruky · {specialRoundLabel(view.nextHand)}
           </>
         ) : null,
     },
@@ -325,6 +326,9 @@ function chapters(zoom: (src: string, alt: string) => void): Chapter[] {
       body: ({ view }) => (
         <>
           <ModeRules info={modeInfo('piggy', view.settings, view.piggy ?? null)} />
+          <p className="help-note">
+            Séria: host zvolí počet hier (1–{MAX_PIGGY_GAMES}) alebo <strong>natrvalo</strong>. <strong>Ukončiť po tejto hre</strong> dohrá bežiacu hru a ďalšiu už nespustí; <strong>Zrušiť hneď</strong> vráti vklady.
+          </p>
           <div className="help-demo-row">
             <span className="help-demo-inline">
               <PiggyDots wins={1} target={PIGGY_TARGET_WINS} /> 1 výhra
@@ -341,6 +345,7 @@ function chapters(zoom: (src: string, alt: string) => void): Chapter[] {
         view.piggy?.status === 'running' ? (
           <>
             Prasiatko beží: <strong>{money(view.piggy.amount)}</strong>
+            {piggySeriesLabel(view.piggy) && ` · ${piggySeriesLabel(view.piggy)}`}
             {me && (
               <>
                 {' '}
@@ -364,7 +369,7 @@ function chapters(zoom: (src: string, alt: string) => void): Chapter[] {
                 Na každý ťah máš <strong>základný čas ({view.settings.actionTimeoutSec} s)</strong>. Keď uplynie, cinkne a začne sa míňať tvoj <strong>osobný timebank</strong> — oranžový krúžok okolo avatara.
               </>,
               <>
-                Keď ťah stihneš v základnom čase, <strong>polovica ušetreného času</strong> sa ti pripíše do timebanku (najviac {TIME_BANK_MAX_SEC} s).
+                Keď ťah stihneš v základnom čase, <strong>štvrtina ušetreného času</strong> sa ti pripíše do timebanku (najviac {TIME_BANK_MAX_SEC} s).
               </>,
               <>
                 Keď minieš aj timebank, hra za teba <strong>checkne</strong>, ak sa dá, inak <strong>zahodí karty</strong>.
@@ -386,6 +391,9 @@ function chapters(zoom: (src: string, alt: string) => void): Chapter[] {
               </>,
               <>
                 <strong>Call any</strong> — dorovná čokoľvek.
+              </>,
+              <>
+                Predvoľby sú na rovnakých miestach ako tlačidlá Fold / Check · Call / Bet · Raise. Keď na teba príde rad, tlačidlá na chvíľku (0,4 s) nereagujú — aby si omylom nekliklo niečo iné.
               </>,
             ]}
           />
@@ -618,7 +626,7 @@ function chapters(zoom: (src: string, alt: string) => void): Chapter[] {
                 </tr>
                 <tr>
                   <th>★ Spoluhost</th>
-                  <td>spustiť a pozastaviť hru, meniť pravidlá (platia od ďalšej ruky), špeciálne kolá, 7-2, Prasiatko, púšťať nových hráčov, vyhodiť hráča, prideliť práva hosta a rolu bankára</td>
+                  <td>spustiť a pozastaviť hru, meniť pravidlá (platia od ďalšej ruky), špeciálne kolá, 7-2, Prasiatko, jukebox, púšťať nových hráčov, vyhodiť alebo zlúčiť hráča, prideliť práva hosta a rolu bankára</td>
                 </tr>
                 <tr>
                   <th>🏦 Bankár</th>
@@ -635,6 +643,13 @@ function chapters(zoom: (src: string, alt: string) => void): Chapter[] {
             items={[
               <>Nový hráč z odkazu musí byť schválený hostom — kým nie je, nevidí nič zo stola. Vracajúci sa hráč schválenie nepotrebuje.</>,
               <>Keď bankár alebo host odíde, rola prejde na niekoho, kto už rolu má — nikdy nie na náhodného hráča.</>,
+              <>
+                <strong>Vyhodiť</strong> môže host každého okrem seba a zakladateľa — aj hráča v ruke (hneď zloží karty), offline aj toho, kto odišiel od stola. Žetóny ostanú v transakciách a vyrovnajú sa v cashoute; späť sa vyhodený dostane len so súhlasom hosta.
+              </>,
+              <>
+                <strong>Zlúčiť do…</strong> — keď sa niekto pripojil z iného zariadenia ako nový hráč: host klikne na pôvodného (offline) hráča a vyberie nového. Žetóny, transakcie, štatistiky aj história prejdú na nového a pôvodný zo stola zmizne. Nedá sa počas rozohranej ruky toho hráča ani počas losovania.
+              </>,
+              <>Kto od stola odišiel, je v paneli hosta aj v čakárni v sekcii „Odišli od stola“ — host ho odtiaľ môže vyhodiť alebo zlúčiť.</>,
             ]}
           />
           {shot('table-roles', 'Odznaky rolí pri stole', 'Pri stole: ♛ a 🏦 pred menom hosta, ★ pri spoluhostovi')}
@@ -677,6 +692,9 @@ function chapters(zoom: (src: string, alt: string) => void): Chapter[] {
                 <strong>Zvuk</strong> — stlmenie všetkého, zvukové efekty, upozornenie na ťah, hlasitosť efektov a hlasitosť hráčov.
               </>,
               <>
+                <strong>Hlasitosť jedného hráča</strong> — klikni na jeho miesto pri stole: posuvník 0–150 % a <strong>Stlmiť</strong>. Platí len pre teba a pamätá sa; stlmený hráč má pri mieste ikonku 🔇.
+              </>,
+              <>
                 Na <strong>mobile</strong> sú pauza, kamera, mikrofón a zvuk v menu ☰.
               </>,
             ]}
@@ -690,6 +708,26 @@ function chapters(zoom: (src: string, alt: string) => void): Chapter[] {
       ),
     },
     {
+      id: 'jukebox',
+      group: 'Ostatné',
+      icon: '🎵',
+      title: 'Jukebox',
+      body: () => (
+        <Points
+          items={[
+            <>Host jukebox zapína a vypína pre celý stôl. Všetci počujú tú istú pesničku v rovnakom čase.</>,
+            <>
+              Pesničku (odkaz na YouTube, najviac {Math.round(JUKEBOX_MAX_DURATION_SEC / 60)} min) môže pridať <strong>len víťaz poslednej dohranej ruky</strong> — jednu za výhru.
+            </>,
+            <>
+              Vo fronte je najviac <strong>{JUKEBOX_MAX_QUEUE} pesničiek</strong> a vidia ho všetci (názov a kto ju pridal).
+            </>,
+            <>Pesničky sa nedajú preskočiť, pretáčať ani pozastaviť — ani hostom. Hlasitosť a stlmenie jukeboxu má každý vlastné.</>,
+          ]}
+        />
+      ),
+    },
+    {
       id: 'stats',
       group: 'Ostatné',
       icon: '📊',
@@ -699,7 +737,7 @@ function chapters(zoom: (src: string, alt: string) => void): Chapter[] {
           <Points
             items={[
               <>
-                <strong>📊 Štatistiky</strong> — leaderboard (kto je koľko hore/dole) a história rúk aj s kartami, ktoré sa ukázali.
+                <strong>📊 Leaderboard a História</strong> — záložky bočného panela: kto je koľko hore/dole a odohrané ruky s kartami, ktoré sa ukázali. Pri každej ruke vidíš aj svoje karty a koľko si v nej vyhral či prehral (cudzie skryté karty nikdy) a výhry z Prasiatka aj 7-2 bonusu.
               </>,
               <>
                 <strong>Férové miešanie</strong> — do každého balíčka prispieva náhodou aj tvoj prehliadač, takže balíček nevie zvoliť nikto, ani prevádzkovateľ servera. Po hre si v Histórii stiahneš dôkazy a overíš ich.

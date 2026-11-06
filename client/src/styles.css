@@ -5465,30 +5465,6 @@ h3 {
   color: #7fe3b0;
 }
 
-/* Kvalita spojenia s hráčom (len keď ide cez relay alebo je zlá) — pomáha nájsť príčinu sekania */
-.seat-link {
-  position: absolute;
-  left: 50%;
-  bottom: 30%;
-  translate: -50% 0;
-  z-index: 4;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: rgba(10, 18, 14, 0.88);
-  border: 1px solid rgba(232, 194, 110, 0.6);
-  color: #ffe6a8;
-  font-size: 0.62rem;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  pointer-events: auto;
-}
-
-.seat-link.bad {
-  border-color: rgba(214, 69, 69, 0.8);
-  color: #ffb3b3;
-}
-
 .cashout-netted {
   color: var(--muted);
   font-size: 0.72rem;
@@ -5797,4 +5773,36 @@ span.topbar-desk {
     width: 12px;
     height: 12px;
   }
+}
+
+/* Nová verzia hry na serveri — ponuka obnoviť stránku */
+.update-banner {
+  position: fixed;
+  left: 50%;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  translate: -50% 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100vw - 32px);
+  padding: 8px 10px 8px 14px;
+  border-radius: 12px;
+  background: rgba(10, 24, 17, 0.96);
+  border: 1px solid rgba(232, 194, 110, 0.7);
+  color: #ffe6a8;
+  font-size: 0.85rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.lobby-footer {
+  margin-top: 24px;
+  text-align: center;
+}
+
+.version-tag {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
 }

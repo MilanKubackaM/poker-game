@@ -2,10 +2,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Card, PlayerAction, ReturnMode, RunVoteView, SeatPlayerView, TableEvent, TableView } from '../../../shared/types';
 import { MAX_SEATS, VARIANT_LABELS } from '../../../shared/constants';
 import { formatMoney } from '../../../shared/money';
-import { handsLabel } from '../../../shared/plural';
 import type { ChatToastItem } from '../hooks/useChatToasts';
 import { SIDE_PANEL_DOCKED_QUERY, useMediaQuery } from '../hooks/useMediaQuery';
-import type { LinkInfo } from '../hooks/useMesh';
 import { useNow } from '../hooks/useNow';
 import { bankerIdOf, isAdmin, isBanker } from '../roles';
 import { turnClock } from '../turnClock';
@@ -15,13 +13,15 @@ import { DealerChoiceModal, DrawBanner, DrawExplainModal, DrawField, cardLabel }
 import { HostPanel, type BankActions, type HostActions } from './HostPanel';
 import { playerRoles } from './HostPlayers';
 import { PlayingCard } from './PlayingCard';
-import { Confetti, ModeIntroModal, PiggyBank, PiggyFlight, PiggyWonDialog, inPiggy, usePiggySounds } from './GameModes';
+import { Confetti, ModeIntroModal, PiggyBank, PiggyFlight, PiggyWonDialog, inPiggy, specialRoundLabel, usePiggySounds } from './GameModes';
 import { ReturnDialog, StatusBanner, owesBlinds, returnModeOf, standingText } from './PlayerPause';
 import { EmptySeat, Seat, type SeatPosition } from './Seat';
 import { SidePanel, type SideTab } from './SidePanel';
 import type { StatsCashout, StatsTab } from './Stats';
 import { TableTopbar } from './TableTopbar';
 import { JoinRequestsBanner } from './JoinRequests';
+import { MergeDialog, SeatMenu } from './SeatMenu';
+import { usePlayerAudioMap } from '../playerAudio';
 
 export interface TableHandlers {
   onAction: (action: PlayerAction) => void;
@@ -57,7 +57,7 @@ export interface TableUiState {
   hostTab?: 'game' | 'rules' | 'players';
   chatOpen?: boolean;
   sideTab?: SideTab;
-  /** Leaderboard / história — v bočnom paneli počas hry aj v čakárni. */
+  /** Výsledky stola na stránke čakárne (pri stole sú to priamo záložky bočného panela — `sideTab`). */
   statsTab?: StatsTab;
   menuOpen?: boolean;
   /** Demo: otvorené Vysvetlivky na kapitole. */
@@ -68,14 +68,16 @@ export interface TableUiState {
   deleteOpen?: boolean;
   /** Demo: čakáreň počas bežiacej hry (hráč odišiel od stola). */
   roomView?: boolean;
+  /** Demo: otvorené menu hráča pri stole (id hráča). */
+  seatMenu?: string;
+  /** Demo: otvorený výber cieľa pri zlučovaní (id zlučovaného hráča). */
+  mergeFrom?: string;
 }
 
 export interface TableScreenProps {
   view: TableView;
   events: TableEvent[];
   streams: Map<string, MediaStream>;
-  /** Kvalita spojenia s ostatnými hráčmi (priamo / relay, RTT, straty). */
-  links?: Map<string, LinkInfo>;
   localStream: MediaStream | null;
   /** Hráči, ktorí práve hovoria (meranie hlasitosti mikrofónu) — zvýraznia sa pri stole aj v čakárni. */
   speaking?: ReadonlySet<string>;
@@ -107,7 +109,7 @@ const VIDEO_GROW_PORTRAIT = 20;
 const noChatToasts: ChatToastItem[] = [];
 const noop = () => undefined;
 
-/** Bočný panel (chat, priebeh, transakcie, štatistiky) a či je chat práve na obrazovke. */
+/** Bočný panel (chat, priebeh, transakcie, leaderboard, história, cashout) a či je chat práve na obrazovke. */
 export function useSidePanelState(initialUi: TableUiState | undefined) {
   const [chatOpen, setChatOpen] = useState(!!initialUi?.chatOpen);
   const [sideTab, setSideTab] = useState<SideTab>(initialUi?.sideTab ?? 'chat');
@@ -132,19 +134,76 @@ export function usePortrait(): boolean {
   return portrait;
 }
 
-/** `piggyRow` = pod menom sú krúžky prasiatka (vyšší štítok) — stávky horných hráčov sa odsunú ďalej. */
+/**
+ * Rozmery stola v jednotkách výšky `.table-area` (výška = 100) — musia sedieť s CSS (`.table-area` aspect-ratio, `.felt` inset).
+ * Stôl je „štadión" (obdĺžnik s polkruhovými koncami), nie elipsa — preto miesta nerozkladáme po elipse.
+ */
+const TABLE_GEOMETRY = {
+  landscape: { aspect: 1.8, insetX: 9, insetY: 11 },
+  portrait: { aspect: 0.68, insetX: 11, insetY: 9 },
+} as const;
+/** O koľko jednotiek výšky leží stred miesta za vonkajšou hranou drevenej obruby. */
+const SEAT_RING_OFFSET = 2;
+
+/**
+ * Bod na obvode štadióna (polosi `halfX` × `halfY`) vo vzdialenosti `distance` od stredu spodnej hrany,
+ * smerom doľava → hore → doprava. Vracia aj vonkajšiu normálu v tom bode.
+ */
+function stadiumPoint(halfX: number, halfY: number, distance: number) {
+  const radius = Math.min(halfX, halfY);
+  const straightX = halfX - radius;
+  const straightY = halfY - radius;
+  const quarter = (Math.PI * radius) / 2;
+  const corner = (centerX: number, centerY: number, startAngle: number, along: number) => {
+    const angle = startAngle + along / radius;
+    const nx = Math.cos(angle);
+    const ny = Math.sin(angle);
+    return { x: centerX + radius * nx, y: centerY + radius * ny, nx, ny };
+  };
+  const segments: { length: number; at: (along: number) => { x: number; y: number; nx: number; ny: number } }[] = [
+    { length: straightX, at: (along) => ({ x: -along, y: halfY, nx: 0, ny: 1 }) },
+    { length: quarter, at: (along) => corner(-straightX, straightY, Math.PI / 2, along) },
+    { length: 2 * straightY, at: (along) => ({ x: -halfX, y: straightY - along, nx: -1, ny: 0 }) },
+    { length: quarter, at: (along) => corner(-straightX, -straightY, Math.PI, along) },
+    { length: 2 * straightX, at: (along) => ({ x: -straightX + along, y: -halfY, nx: 0, ny: -1 }) },
+    { length: quarter, at: (along) => corner(straightX, -straightY, (3 * Math.PI) / 2, along) },
+    { length: 2 * straightY, at: (along) => ({ x: halfX, y: -straightY + along, nx: 1, ny: 0 }) },
+    { length: quarter, at: (along) => corner(straightX, straightY, 0, along) },
+    { length: straightX, at: (along) => ({ x: straightX - along, y: halfY, nx: 0, ny: 1 }) },
+  ];
+  let rest = distance;
+  for (const segment of segments) {
+    if (rest <= segment.length) {
+      return segment.at(rest);
+    }
+    rest -= segment.length;
+  }
+  return segments[0].at(0);
+}
+
+/**
+ * Miesta sú rovnomerne rozložené po obvode stola (rovnaký rozostup medzi susedmi) a všetky v rovnakej
+ * vzdialenosti od obruby. `piggyRow` = pod menom sú krúžky prasiatka (vyšší štítok) — stávky horných hráčov sa odsunú ďalej.
+ */
 function seatPosition(relative: number, portrait: boolean, piggyRow = false, video = false): SeatPosition {
-  const angle = ((90 + (relative * 360) / MAX_SEATS) * Math.PI) / 180;
-  const radiusX = portrait ? 41 : 45;
-  const radiusY = portrait ? 43 : 41;
-  const cos = Math.cos(angle);
-  const sin = Math.sin(angle);
+  const { aspect, insetX, insetY } = portrait ? TABLE_GEOMETRY.portrait : TABLE_GEOMETRY.landscape;
+  const halfX = (50 - insetX) * aspect + SEAT_RING_OFFSET;
+  const halfY = 50 - insetY + SEAT_RING_OFFSET;
+  const radius = Math.min(halfX, halfY);
+  const perimeter = 4 * (halfX - radius) + 4 * (halfY - radius) + 2 * Math.PI * radius;
+  const point = stadiumPoint(halfX, halfY, (perimeter * relative) / MAX_SEATS);
+  const { nx, ny } = point;
   const grow = video ? (portrait ? VIDEO_GROW_PORTRAIT : VIDEO_GROW) : 0;
   const pull = (portrait ? 46 : 70) + grow / 2;
-  const plateClearance = sin < -0.2 ? -sin * ((portrait ? 36 : 62) + (piggyRow ? 14 : 0) + grow / 2) : 0;
+  const plateClearance = ny < -0.2 ? -ny * ((portrait ? 36 : 62) + (piggyRow ? 14 : 0) + grow / 2) : 0;
   // Dolní hráči majú stávku nad avatarom — odsunieme ju nad odpočet času na ťah (vždy, aby stávky neskákali so zmenou ťahu).
-  const clockClearance = sin > 0.2 ? sin * ((portrait ? CLOCK_CLEARANCE_PORTRAIT : CLOCK_CLEARANCE) + grow / 2) : 0;
-  return { x: 50 + radiusX * cos, y: 50 + radiusY * sin, betX: -cos * pull, betY: -sin * pull * (portrait ? 1 : 0.85) + plateClearance - clockClearance };
+  const clockClearance = ny > 0.2 ? ny * ((portrait ? CLOCK_CLEARANCE_PORTRAIT : CLOCK_CLEARANCE) + grow / 2) : 0;
+  return {
+    x: 50 + point.x / aspect,
+    y: 50 + point.y,
+    betX: -nx * pull,
+    betY: -ny * pull * (portrait ? 1 : 0.85) + plateClearance - clockClearance,
+  };
 }
 
 export function TableScreen(props: TableScreenProps) {
@@ -178,6 +237,11 @@ export function TableScreen(props: TableScreenProps) {
   const returnAutoShown = useRef(false);
   const [piggyClosedAt, setPiggyClosedAt] = useState<number | null>(null);
   const meStanding = !!me?.sittingOut;
+  const playerAudio = usePlayerAudioMap();
+  /** Otvorené menu hráča pri stole (klik na iného hráča). */
+  const [seatMenuId, setSeatMenuId] = useState<string | null>(initialUi?.seatMenu ?? null);
+  const [mergeFrom, setMergeFrom] = useState<string | null>(initialUi?.mergeFrom ?? null);
+  const seatMenuPlayer = seatMenuId && seatMenuId !== view.youId ? view.players.find((player) => player.id === seatMenuId) ?? null : null;
   const meReturning = returnModeOf(me) !== null;
 
   useEffect(() => {
@@ -222,7 +286,7 @@ export function TableScreen(props: TableScreenProps) {
 
   const mySeat = me?.seat ?? 0;
   const occupied = new Set(view.players.map((player) => player.seat));
-  const canMove = (!!me && !me.inHand) || handComplete;
+  const canMove = view.canChangeSeat;
 
   const clock = turnClock(hand, view.settings, now);
   const timerOn = view.settings.actionTimeoutSec > 0;
@@ -349,7 +413,7 @@ export function TableScreen(props: TableScreenProps) {
           docked
             ? undefined
             : () => {
-                setSideTab('stats');
+                setSideTab('leaderboard');
                 setChatOpen(true);
               }
         }
@@ -378,7 +442,7 @@ export function TableScreen(props: TableScreenProps) {
           view.nextHand && (
             <div className="next-hand-banner">
               Ďalšia ruka: <strong>{[view.nextHand.variant ? VARIANT_LABELS[view.nextHand.variant] : null, view.nextHand.sevenDeuce ? '7-2' : null].filter(Boolean).join(' + ')}</strong>
-              {view.nextHand.variant && (view.nextHand.hands ?? 1) > 1 && ` · ${handsLabel(view.nextHand.hands ?? 1)}`}
+              {view.nextHand.variant && (view.nextHand.permanent || (view.nextHand.hands ?? 1) > 1) && ` · ${specialRoundLabel(view.nextHand)}`}
             </div>
           )
         )}
@@ -477,7 +541,6 @@ export function TableScreen(props: TableScreenProps) {
                 <Seat
                   key={player.id}
                   player={player}
-                  link={isMe ? null : props.links?.get(player.id) ?? null}
                   position={position}
                   isMe={isMe}
                   isTurn={hand?.toActId === player.id}
@@ -496,6 +559,9 @@ export function TableScreen(props: TableScreenProps) {
                   piggyWinner={piggyFinished && piggyWinnerIds.has(player.id)}
                   roles={roles}
                   speaking={!!props.speaking?.has(player.id)}
+                  audio={isMe ? null : playerAudio[player.id] ?? null}
+                  onOpenMenu={isMe ? undefined : () => setSeatMenuId((current) => (current === player.id ? null : player.id))}
+                  menuOpen={seatMenuPlayer?.id === player.id}
                 />
               );
             })}
@@ -538,7 +604,6 @@ export function TableScreen(props: TableScreenProps) {
               leaderboard: view.leaderboard ?? [],
               youId: view.youId,
               tableCode: view.code,
-              initialTab: initialUi?.statsTab,
               cashout: cashoutProps(view, youAreBanker ? handlers.bank : undefined),
             }}
           />
@@ -570,6 +635,7 @@ export function TableScreen(props: TableScreenProps) {
           intro={modeIntro}
           settings={view.settings}
           piggy={piggy}
+          nextHand={view.nextHand}
           players={view.players}
           youId={view.youId}
           secondsLeft={Math.max(0, Math.ceil((modeIntro.deadline - now) / 1000))}
@@ -589,6 +655,9 @@ export function TableScreen(props: TableScreenProps) {
       {piggyFinished && piggyClosedAt !== piggy!.startedAtHand && (
         <PiggyWonDialog key={`won-${piggy!.startedAtHand}`} piggy={piggy!} currency={currency} youId={view.youId} onClose={() => setPiggyClosedAt(piggy!.startedAtHand)} />
       )}
+
+      {seatMenuPlayer && <SeatMenu view={view} player={seatMenuPlayer} actions={handlers.host} onMerge={setMergeFrom} onClose={() => setSeatMenuId(null)} />}
+      {mergeFrom && isHost && <MergeDialog view={view} fromId={mergeFrom} onMerge={handlers.host.merge} onClose={() => setMergeFrom(null)} />}
 
       {hostOpen && (isHost || youAreBanker) && (
         <HostPanel view={view} actions={handlers.host} bank={handlers.bank} onClose={() => setHostOpen(false)} initialTab={initialUi?.hostTab} />

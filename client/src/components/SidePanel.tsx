@@ -1,17 +1,20 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { Currency, HandHistoryEntry, LeaderboardRow, LedgerEntry, SeatPlayerView, TableEvent } from '../../../shared/types';
 import { MAX_CHAT_LENGTH } from '../../../shared/constants';
-import { Stats, type StatsCashout, type StatsTab } from './Stats';
+import { Cashout } from './Cashout';
+import { HistoryPanel, Leaderboard, type StatsCashout } from './Stats';
 import { TransactionsTab } from './TransactionsTab';
+import '../sidePanel.css';
 
-export type SideTab = 'chat' | 'log' | 'ledger' | 'stats';
+/** Záložky bočného panela — jedna úroveň, bez podzáložiek. */
+export type SideTab = 'chat' | 'log' | 'ledger' | 'leaderboard' | 'history' | 'cashout';
 
-/** Leaderboard a história pre záložku Štatistiky; v čakárni sa nezobrazuje (je priamo na stránke). */
+/** Leaderboard, história a cashout ako záložky panela pri stole; v čakárni sa nezobrazujú (sú priamo na stránke). */
 export interface SideStats {
   history: HandHistoryEntry[];
   leaderboard: LeaderboardRow[];
   youId: string;
-  initialTab?: StatsTab;
+  /** Bez neho záložka Cashout chýba. */
   cashout?: StatsCashout;
   tableCode?: string;
 }
@@ -30,8 +33,9 @@ interface SidePanelProps {
   stats?: SideStats;
 }
 
-export function SidePanel({ events, players, ledger, currency, onSend, onClose, tab, onTabChange: setTab, stats }: SidePanelProps) {
-  const [statsTab, setStatsTab] = useState<StatsTab>(stats?.initialTab ?? 'leaderboard');
+export function SidePanel({ events, players, ledger, currency, onSend, onClose, tab: requestedTab, onTabChange: setTab, stats }: SidePanelProps) {
+  // Záložka, ktorá tu práve nie je (štatistiky v čakárni, cashout bez bankára), spadne na najbližšiu dostupnú.
+  const tab: SideTab = !stats && (requestedTab === 'leaderboard' || requestedTab === 'history' || requestedTab === 'cashout') ? 'chat' : requestedTab === 'cashout' && !stats?.cashout ? 'leaderboard' : requestedTab;
   const [text, setText] = useState('');
   const [sendError, setSendError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -72,20 +76,28 @@ export function SidePanel({ events, players, ledger, currency, onSend, onClose, 
 
   return (
     <aside className="side-panel">
-      <nav className="tabs">
-        {tabButton('chat', 'Chat')}
-        {tabButton('log', 'Priebeh')}
-        {tabButton('ledger', 'Transakcie')}
-        {stats && tabButton('stats', 'Štatistiky')}
+      <nav className="tabs side-tabs">
+        <div className="side-tab-list">
+          {tabButton('chat', 'Chat')}
+          {tabButton('log', 'Priebeh')}
+          {tabButton('ledger', 'Transakcie')}
+          {stats && tabButton('leaderboard', 'Leaderboard')}
+          {stats && tabButton('history', 'História')}
+          {stats?.cashout && tabButton('cashout', 'Cashout')}
+        </div>
         {onClose && (
           <button type="button" className="icon-btn tab-close" onClick={onClose} aria-label="Zavrieť">
             ✕
           </button>
         )}
       </nav>
-      {tab === 'stats' && stats ? (
+      {stats && (tab === 'leaderboard' || tab === 'history' || tab === 'cashout') ? (
         <div className="side-scroll">
-          <Stats history={stats.history} leaderboard={stats.leaderboard} currency={currency} youId={stats.youId} tab={statsTab} onTabChange={setStatsTab} cashout={stats.cashout} tableCode={stats.tableCode} />
+          <div className="stats">
+            {tab === 'leaderboard' && <Leaderboard rows={stats.leaderboard} currency={currency} youId={stats.youId} />}
+            {tab === 'history' && <HistoryPanel history={stats.history} currency={currency} youId={stats.youId} tableCode={stats.tableCode} />}
+            {tab === 'cashout' && stats.cashout && <Cashout {...stats.cashout} leaderboard={stats.leaderboard} currency={currency} youId={stats.youId} />}
+          </div>
         </div>
       ) : tab === 'ledger' ? (
         <TransactionsTab ledger={ledger} players={players} currency={currency} />

@@ -9,14 +9,16 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { Server, type Socket } from 'socket.io';
 import { generate } from 'selfsigned';
-import type { Ack, Avatar, ClientConfig, JoinClosedPayload, JoinResult, NextHandOverride, PendingJoin, PendingResumeResult, PlayerAction, RtcPayload, TableDeletedPayload, TableEvent, TableMetaPayload, TableSettings, TableSummary } from '../shared/types';
+import type { Ack, Avatar, ClientConfig, JoinClosedPayload, JoinResult, MyHandRecord, NextHandOverride, PendingJoin, PendingResumeResult, PlayerAction, RtcPayload, SessionReplacedPayload, TableDeletedPayload, TableEvent, TableMetaPayload, TableSettings, TableSummary } from '../shared/types';
 import { ACCEPTED_AVATAR_EMOJIS, AVATAR_COLORS, DEFAULT_SETTINGS, MAX_CHAT_LENGTH, MAX_NAME_LENGTH, MAX_TABLE_NAME_LENGTH } from '../shared/constants';
 import { resolveManifest } from '../shared/manifest';
 import { NET_SAMPLE_MS, sanitizeNetSample, type NetStatsResponse } from '../shared/netstats';
 import { LIMITS, TokenBucket, WINDOWS, WindowCounter, clientKey, originAllowed, trustProxyFromEnv } from './limits';
 import { CloudflareIceFile } from './cloudflareTurn';
 import { CloudflareUsageFile } from './cloudflareUsage';
+import { createJukeboxHub } from './jukeboxSocket';
 import { NetStatsStore, statsAccess } from './NetStats';
+import { APP_VERSION, type ServerVersionPayload } from '../shared/version';
 import { SessionManager } from './SessionManager';
 import type { JoinRequest, Table, TablePlayer } from './Table';
 
@@ -217,6 +219,8 @@ function room(code: string): string {
   return `table:${code}`;
 }
 
+const jukebox = createJukeboxHub(io, room, (table) => manager.get(table.code) === table);
+
 /** Čo z ledgeru, histórie a leaderboardu už dostali všetci v miestnosti stola (ďalej idú len novinky). */
 const metaSent = new WeakMap<Table, { ledgerId: number; handNumber: number; leaderboard: string }>();
 
@@ -228,6 +232,20 @@ function sendFullMeta(socket: GameSocket, table: Table): void {
   }
   const payload: TableMetaPayload = { code: table.code, full: true, ...table.metaSince(), leaderboard };
   socket.emit('table:meta', payload);
+}
+
+/**
+ * Celé meta znova všetkým v miestnosti — po zmene, ktorá prepísala už odoslané položky (zlúčenie hráčov). Kurzor sa
+ * zahodí, aby sa nastavil podľa aktuálneho stavu a ďalšie novinky išli len od neho.
+ */
+function resendFullMeta(table: Table): void {
+  metaSent.delete(table);
+  for (const socketId of io.sockets.adapter.rooms.get(room(table.code)) ?? []) {
+    const socket = io.sockets.sockets.get(socketId) as GameSocket | undefined;
+    if (socket) {
+      sendFullMeta(socket, table);
+    }
+  }
 }
 
 /** Novinky v ledgeri/histórii a zmenený leaderboard celej miestnosti — raz, nie pri každom ťahu celé. */
@@ -250,6 +268,7 @@ function broadcastMeta(table: Table): void {
 
 function broadcastState(table: Table): void {
   broadcastMeta(table);
+  jukebox.tableChanged(table);
   for (const player of table.players.values()) {
     for (const socketId of player.sockets) {
       io.sockets.sockets.get(socketId)?.emit('table:state', table.liveView(player.id));
@@ -275,6 +294,7 @@ function deleteTable(table: Table, byName: string): void {
     player.sockets.clear();
   }
   pendingBroadcast.delete(table);
+  jukebox.tableRemoved(table);
   manager.remove(table.code);
   console.log(`Stôl ${table.code} zmazal zakladateľ ${byName}`);
 }
@@ -292,7 +312,7 @@ function iceServers(): ClientConfig['iceServers'] {
 }
 
 app.get('/api/health', (_request, response) => {
-  response.json({ ok: true, tables: manager.count() });
+  response.json({ ok: true, version: APP_VERSION, tables: manager.count() });
 });
 
 app.get('/api/config', (_request, response) => {
@@ -449,8 +469,16 @@ function bind(socket: GameSocket, table: Table, player: TablePlayer): void {
   socket.data.playerId = player.id;
   socket.join(room(table.code));
   sendFullMeta(socket, table);
+  // Ten istý hráč sa pripojil inde (iné okno / zariadenie) — staré spojenia sa odstavia samy, rtcId je najnovší socket.
+  const replaced: SessionReplacedPayload = { code: table.code };
+  for (const socketId of player.sockets) {
+    if (socketId !== socket.id) {
+      io.sockets.sockets.get(socketId)?.emit('session:replaced', replaced);
+    }
+  }
   table.attachSocket(player, socket.id);
   socket.emit('table:history', table.events);
+  jukebox.sendTo(socket, table);
   netStats.recordEvent(table.code, table.settings.name, player.id, player.name, 'pripojený k serveru');
   const relay = relayIceServers();
   if (relay) {
@@ -529,6 +557,8 @@ function context(socket: GameSocket): { table: Table; player: TablePlayer } | nu
 
 io.on('connection', (rawSocket) => {
   const socket = rawSocket as GameSocket;
+  // Klient so starým kódom (otvorený pred nasadením) ponúkne obnovenie stránky.
+  socket.emit('server:version', { version: APP_VERSION } satisfies ServerVersionPayload);
 
   const ip = socket.data.ip ?? 'unknown';
   const events = new TokenBucket(LIMITS.eventsPerSecond, LIMITS.eventsBurst);
@@ -586,6 +616,8 @@ io.on('connection', (rawSocket) => {
       handler(payload, table, player, ack);
     });
   };
+
+  jukebox.register(withPlayer, withHost);
 
   handle<{ name?: unknown; avatar?: unknown; settings?: Partial<TableSettings> }>('table:create', (payload, ack) => {
     const name = cleanName(payload.name);
@@ -888,18 +920,16 @@ io.on('connection', (rawSocket) => {
     reply(ack, outcome.ok ? { ok: true } : outcome);
   });
 
-  withHost<{ playerId?: unknown }>('host:kick', (payload, table, player, ack) => {
-    const target = typeof payload.playerId === 'string' ? table.players.get(payload.playerId) : undefined;
-    if (!target || target === player) {
-      reply(ack, { ok: false, error: 'Neplatný hráč' });
-      return;
+  // Vyhodiť sa dá každý člen (sediaci, offline, odchádzajúci aj ten, kto od stola odišiel) okrem seba a zakladateľa.
+  withHost<{ playerId?: unknown }>('host:kick', (payload, table, player, ack) => reply(ack, table.kickMember(player, payload.playerId)));
+
+  // Zlúčenie hráča (napr. ten istý človek z iného zariadenia) — ledger a história sa prepíšu, všetci dostanú celé meta.
+  withHost<{ fromId?: unknown; toId?: unknown }>('host:merge', (payload, table, player, ack) => {
+    const outcome = table.mergeMember(player, payload.fromId, payload.toId);
+    if (outcome.ok) {
+      resendFullMeta(table);
     }
-    if (table.isHost(target.id)) {
-      reply(ack, { ok: false, error: 'Zakladateľa stola nemôžeš vyhodiť' });
-      return;
-    }
-    table.leave(target, true, player.name);
-    reply(ack, { ok: true });
+    reply(ack, outcome);
   });
 
   withHost<{ playerId?: unknown }>('host:transfer', (payload, table, player, ack) => {
@@ -940,12 +970,23 @@ io.on('connection', (rawSocket) => {
 
   withHost('host:toLobby', (_payload, table, _player, ack) => reply(ack, table.hostToLobby()));
 
-  withHost<{ action?: unknown }>('host:piggy', (payload, table, _player, ack) => {
-    if (payload.action !== 'start' && payload.action !== 'cancel') {
+  // Prasiatko: { action: 'start', games?, permanent? } | { action: 'stop' } | { action: 'cancel' } (PiggyCommand).
+  withHost<{ action?: unknown; games?: unknown; permanent?: unknown }>('host:piggy', (payload, table, _player, ack) => {
+    if (payload.action === 'stop' || payload.action === 'cancel') {
+      reply(ack, table.hostPiggy({ action: payload.action }));
+      return;
+    }
+    if (payload.action !== 'start') {
       reply(ack, { ok: false, error: 'Neplatná voľba' });
       return;
     }
-    reply(ack, table.hostPiggy(payload.action));
+    const permanent = payload.permanent ?? false;
+    if (typeof permanent !== 'boolean') {
+      reply(ack, { ok: false, error: 'Neplatná voľba' });
+      return;
+    }
+    // Počet hier (celé číslo 1…MAX_PIGGY_GAMES) overí stôl; pri `permanent` sa ignoruje.
+    reply(ack, table.hostPiggy({ action: 'start', games: (payload.games ?? 1) as number, permanent }));
   });
 
   withPlayer('mode:ack', (_payload, table, player, ack) => reply(ack, table.modeAck(player)));
@@ -956,6 +997,8 @@ io.on('connection', (rawSocket) => {
   withPlayer<{ roundId?: unknown; seed?: unknown }>('fair:reveal', (payload, table, player, ack) => reply(ack, table.fairReveal(player, payload.roundId, payload.seed)));
   withPlayer('fair:proofs', (_payload, table, _player, ack) => reply(ack, { ok: true, data: table.fairProofs() }));
   withPlayer<{ runs?: unknown }>('hand:runs', (payload, table, player, ack) => reply(ack, table.chooseRuns(player, payload.runs)));
+  // Moje karty a výsledok v dohraných rukách — len vlastné záznamy, cudzie skryté karty nikdy.
+  withPlayer('history:mine', (_payload, table, player, ack) => reply<MyHandRecord[]>(ack, { ok: true, data: table.myHistory(player.id) }));
 
   // Sieťové štatistiky kamier: klient každých 5 s pošle vzorku za všetky spojenia — na stránku /stats a súhrn do logu.
   let netSamples = 0;

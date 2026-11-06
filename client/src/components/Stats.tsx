@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react';
-import type { Currency, HandHistoryEntry, LeaderboardRow, Variant } from '../../../shared/types';
+import type { Currency, HandHistoryEntry, LeaderboardRow, MyHandRecord, Variant } from '../../../shared/types';
 import { formatMoney } from '../../../shared/money';
+import { useMyHands } from '../myHands';
 import { Cashout, type CashoutProps } from './Cashout';
 import { FairnessBox } from './FairnessBox';
 import { PlayingCard } from './PlayingCard';
+import '../sidePanel.css';
 
 export type StatsTab = 'leaderboard' | 'history' | 'cashout';
 
@@ -39,33 +41,38 @@ interface StatsProps {
   tableCode?: string;
 }
 
-/** Leaderboard, história rúk a cashout pod jedným prepínačom — v čakárni aj v bočnom paneli počas hry. */
+/**
+ * Výsledky stola na stránke čakárne — jedna úroveň záložiek (rovnaké ako v bočnom paneli pri stole).
+ * Pri stole sa Leaderboard / História / Cashout ukazujú priamo ako záložky bočného panela (`SidePanel`).
+ */
 export function Stats({ history, leaderboard, currency, youId, tab: requestedTab, onTabChange, cashout, tableCode }: StatsProps) {
   const tab = requestedTab === 'cashout' && !cashout ? 'leaderboard' : requestedTab;
+  const tabButton = (key: StatsTab, label: string) => (
+    <button type="button" role="tab" aria-selected={tab === key} className={tab === key ? 'tab active' : 'tab'} onClick={() => onTabChange(key)}>
+      {label}
+    </button>
+  );
   return (
     <div className="stats">
-      <div className="segmented" role="tablist" aria-label="Štatistiky stola">
-        <button type="button" role="tab" aria-selected={tab === 'leaderboard'} className={tab === 'leaderboard' ? 'segment active' : 'segment'} onClick={() => onTabChange('leaderboard')}>
-          🏆 Leaderboard
-        </button>
-        <button type="button" role="tab" aria-selected={tab === 'history'} className={tab === 'history' ? 'segment active' : 'segment'} onClick={() => onTabChange('history')}>
-          🕘 História <span className="segment-count">{history.length}</span>
-        </button>
-        {cashout && (
-          <button type="button" role="tab" aria-selected={tab === 'cashout'} className={tab === 'cashout' ? 'segment active' : 'segment'} onClick={() => onTabChange('cashout')}>
-            💸 Cashout
-          </button>
-        )}
+      <div className="tabs stats-tabs" role="tablist" aria-label="Výsledky stola">
+        {tabButton('leaderboard', 'Leaderboard')}
+        {tabButton('history', 'História')}
+        {cashout && tabButton('cashout', 'Cashout')}
       </div>
       {tab === 'leaderboard' && <Leaderboard rows={leaderboard} currency={currency} youId={youId} />}
-      {tab === 'history' && (
-        <>
-          {tableCode && <FairnessBox tableCode={tableCode} youId={youId} />}
-          <HandHistory history={history} currency={currency} />
-        </>
-      )}
+      {tab === 'history' && <HistoryPanel history={history} currency={currency} youId={youId} tableCode={tableCode} />}
       {tab === 'cashout' && cashout && <Cashout {...cashout} leaderboard={leaderboard} currency={currency} youId={youId} />}
     </div>
+  );
+}
+
+/** Záložka História: dôkazy overiteľného miešania + odohrané ruky (aj s mojimi kartami a výsledkom). */
+export function HistoryPanel({ history, currency, youId, tableCode }: { history: HandHistoryEntry[]; currency: Currency; youId: string; tableCode?: string }) {
+  return (
+    <>
+      {tableCode && <FairnessBox tableCode={tableCode} youId={youId} />}
+      <HandHistory history={history} currency={currency} />
+    </>
   );
 }
 
@@ -130,6 +137,7 @@ export function Leaderboard({ rows, currency, youId }: { rows: LeaderboardRow[];
 export function HandHistory({ history, currency }: { history: HandHistoryEntry[]; currency: Currency }) {
   const [limit, setLimit] = useState(HISTORY_PAGE);
   const newestFirst = useMemo(() => [...history].reverse(), [history]);
+  const myHands = useMyHands(history.length > 0 ? history[history.length - 1].handNumber : null);
   const money = (cents: number) => formatMoney(cents, currency);
   if (history.length === 0) {
     return <div className="muted empty-note">Zatiaľ sa neodohrala žiadna ruka.</div>;
@@ -168,6 +176,7 @@ export function HandHistory({ history, currency }: { history: HandHistoryEntry[]
                 ))}
               </div>
             ))}
+            <MyHandRow record={myHands.get(entry.handNumber)} currency={currency} />
             <ul className="history-winners">
               {entry.winners.map((winner) => (
                 <li key={winner.playerId} className="history-winner">
@@ -199,6 +208,11 @@ export function HandHistory({ history, currency }: { history: HandHistoryEntry[]
                 7-2! {entry.bounty.winnerName} inkasuje bonus {money(entry.bounty.total)}
               </div>
             )}
+            {entry.piggy?.winners.map((winner) => (
+              <div key={winner.playerId} className="history-piggy-line">
+                🐷 Prasiatko: {winner.playerName} <span className="ledger-pos">+{money(winner.amount)}</span>
+              </div>
+            ))}
           </li>
         ))}
       </ol>
@@ -207,6 +221,28 @@ export function HandHistory({ history, currency }: { history: HandHistoryEntry[]
           Zobraziť ďalšie ({Math.min(HISTORY_PAGE, newestFirst.length - limit)} z {newestFirst.length - limit})
         </button>
       )}
+    </div>
+  );
+}
+
+/** Moje karty a môj výsledok v ruke (len z `history:mine` — cudzie skryté karty sa sem nikdy nedostanú). */
+function MyHandRow({ record, currency }: { record: MyHandRecord | undefined; currency: Currency }) {
+  if (!record) {
+    return null;
+  }
+  return (
+    <div className={record.folded ? 'history-mine history-mine-folded' : 'history-mine'} aria-label="Moja ruka">
+      <span className="history-mine-label">Ty</span>
+      {record.cards.length > 0 && (
+        <span className="history-winner-cards">
+          {record.cards.map((card, index) => (
+            <PlayingCard key={`${card}-${index}`} card={card} size="sm" dimmed={record.folded} />
+          ))}
+        </span>
+      )}
+      {record.folded && <span className="history-mine-fold">fold</span>}
+      {(!record.folded || record.net !== 0) && <strong className={`history-mine-net ${signClass(record.net)}`}>{formatMoney(record.net, currency, { sign: true })}</strong>}
+      {record.handDescription && <span className="muted history-mine-desc">{record.handDescription}</span>}
     </div>
   );
 }

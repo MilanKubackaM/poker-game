@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Avatar, TableEvent, TableSettings } from '../../shared/types';
-import { DEFAULT_SETTINGS, HAND_PAUSE_MS } from '../../shared/constants';
+import { DEFAULT_SETTINGS, HAND_PAUSE_MS, TIME_BANK_SAVED_RATIO } from '../../shared/constants';
 import { Table, type TableHooks, type TablePlayer, type TableSnapshot } from '../Table';
 import { TEST_BUY_IN, buyIn, setTestBuyIn } from './helpers';
 
@@ -98,15 +98,16 @@ describe('time bank', () => {
     expect(table.view(a.id).hand!.turnBaseDeadline).toBe(start + BASE);
   });
 
-  it('adds half of the saved base time (rounded down to ms) when acting within the base', () => {
+  it('adds a quarter of the saved base time (rounded down to ms) when acting within the base', () => {
+    expect(TIME_BANK_SAVED_RATIO).toBe(0.25);
     const { table, a, b } = headsUp();
     vi.advanceTimersByTime(5000);
     callOrCheck(table, a);
-    expect(a.timeBankMs).toBe(BANK + 5000);
-    expect(seat(table, a).timeBankMs).toBe(BANK + 5000);
+    expect(a.timeBankMs).toBe(BANK + (BASE - 5000) / 4);
+    expect(seat(table, a).timeBankMs).toBe(BANK + (BASE - 5000) / 4);
     vi.advanceTimersByTime(7001);
     callOrCheck(table, b);
-    expect(b.timeBankMs).toBe(BANK + 3999);
+    expect(b.timeBankMs).toBe(BANK + Math.floor((BASE - 7001) / 4));
   });
 
   it('runs the bank after the base time and subtracts what was used', () => {

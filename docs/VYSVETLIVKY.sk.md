@@ -152,16 +152,17 @@ Nové obrázky po zmene UI: `npm run dev:client` a `node tools/make-help-shots.m
 | Začíname | 🚀 Rýchly štart | 6 krokov od pozvánky po cashout | variant, blindy, host, bankár, stav hry |
 | | ♠ Ako sa hrá Hold'em | flop/turn/river, blindy, akcie, no-limit, **poradie kombinácií s kartami** | SB / BB |
 | Herné módy | 🃏 Omaha | pravidlá módu + príklad farby | pot-limit / no-limit |
-| | 🍍 Pineapple | pravidlá módu, auto-zahodenie | — |
-| | ✨ Špeciálne kolo | vyhlásenie hostom (max 50 rúk), banner v lište, „Rozumiem“ | naplánovaný variant |
+| | 🍍 Pineapple | pravidlá módu, 10 s na zahodenie, potom sa zahodí **náhodná** karta | — |
+| | ✨ Špeciálne kolo | vyhlásenie hostom (max 50 rúk alebo **natrvalo** do vypnutia), banner v lište, „Rozumiem“, kombinácia s Prasiatkom / 7-2 | naplánovaný variant a počet / natrvalo |
 | | 7·2 Pravidlo 7-2 | pravidlá + príklad výpočtu bonusu | zapnuté a za koľko |
-| | 🐷 Prasiatko | pravidlá + živé krúžky | suma a moje krúžky |
-| Hra | ⏱ Čas na ťah a predvoľby | základný čas, timebank (½ ušetreného, max 200 s), auto check/fold, 4 predvoľby | základný čas, môj timebank |
+| | 🐷 Prasiatko | pravidlá + živé krúžky, **séria** (1–20 hier alebo natrvalo, pravidlá len pri prvej hre), „Ukončiť po tejto hre“ vs. „Zrušiť hneď a vrátiť vklady“ | suma, séria a moje krúžky |
+| Hra | ⏱ Čas na ťah a predvoľby | základný čas, timebank (¼ ušetreného, max 200 s), auto check/fold, 4 predvoľby | základný čas, môj timebank |
 | | 🔥 All-in, viac behov a koniec ruky | side pot, hlasovanie 1×/2×/3× (platí najmenšia), ukázať karty, odkryť board za 1 BB | — |
 | | ☕ Pauza, postavenie sa a odchod | tabuľka pauza / postaviť sa / odísť, návrat (počkať na BB / zaplatiť), Opustiť hru | môj stav |
 | Peniaze a roly | 🏦 Žetóny, bankár a vyplácanie | bankár, 0 žetónov pri príchode, **o žetóny sa žiada u bankára** (Zaplatené / Na dlh), keď dôjdu žetóny, cashout | bankár, moje žetóny |
-| | ♛ Roly pri stole | ikonky rolí (živá ukážka), tabuľka právomocí, schvaľovanie nových hráčov | zoznam ľudí s rolami |
-| Ostatné | 🎙 Kamera, mikrofón, zvuk a chat | P2P video, **kto práve hovorí** (živá ukážka), push-to-talk, zvuk, mobil ☰, chat | — |
+| | ♛ Roly pri stole | ikonky rolí (živá ukážka), tabuľka právomocí, schvaľovanie nových hráčov, **vyhodenie** (každého okrem seba a zakladateľa; žetóny ostanú v transakciách, návrat len so súhlasom hosta), **zlúčenie** hráča z iného zariadenia („Zlúčiť do…“), sekcia „Odišli od stola“ | zoznam ľudí s rolami |
+| Ostatné | 🎙 Kamera, mikrofón, zvuk a chat | P2P video, **kto práve hovorí** (živá ukážka), **hlasitosť / stlmenie jedného hráča** (klik na miesto, 0–150 %, len u mňa, 🔇 pri mieste), push-to-talk, zvuk, mobil ☰, chat | — |
+| | 🎵 Jukebox | host zapína/vypína; pesničku z YouTube pridá len víťaz poslednej ruky (1 za výhru, max 10 min); front max 5, vidia ho všetci; nedá sa preskočiť ani pretáčať; hlasitosť má každý vlastnú | — |
 | | 📊 Štatistiky a férovosť | leaderboard, história, overiteľné miešanie, úprimný limit | — |
 | | 📱 Appka, dealer button a výpadky | inštalácia, losovanie ♠ > ♥ > ♦ > ♣, reconnect | — |
 

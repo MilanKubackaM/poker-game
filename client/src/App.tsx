@@ -10,6 +10,7 @@ import type {
   NextHandOverride,
   PlayerAction,
   ReturnMode,
+  SessionReplacedPayload,
   Settlement,
   TableDeletedPayload,
   TableEvent,
@@ -27,7 +28,8 @@ import { Lobby, type LobbyNotice } from './components/Lobby';
 import { tableName } from './components/TableTopbar';
 import type { TableHandlers } from './components/TableScreen';
 import { GameScreen } from './components/WaitingRoom';
-import { RemoteAudio } from './components/VideoTile';
+import { RemoteAudio, hasLiveAudio } from './components/VideoTile';
+import { SessionReplacedScreen } from './components/SessionReplaced';
 import { useSpeakingIds } from './voiceActivity';
 import { ConfirmHost, choiceDialog, confirmDialog } from './components/ConfirmDialog';
 import { DemoApp } from './demo/DemoApp';
@@ -120,6 +122,10 @@ function LiveApp() {
   const [pending, setPending] = useState<PendingJoin | null>(null);
   const pendingRef = useRef<PendingJoin | null>(null);
   pendingRef.current = pending;
+  /** Ten istý hráč otvoril stôl v inom okne / zariadení — toto okno je odstavené (bez hlasu, videa a štatistík). */
+  const [replaced, setReplaced] = useState(false);
+  const replacedRef = useRef(false);
+  replacedRef.current = replaced;
   const joinedRef = useRef<JoinResult | null>(null);
   const viewRef = useRef<TableView | null>(null);
   const pendingLeave = useRef<PendingLeave | null>(null);
@@ -127,6 +133,9 @@ function LiveApp() {
   const toastTimer = useRef<number | undefined>(undefined);
   const noticeTimer = useRef<number | undefined>(undefined);
   const media = useMedia();
+  /** Skutočný stav mikrofónu/kamery v tomto okne — po naviazaní na stôl sa pošle serveru (pozri `enterTable`). */
+  const mediaFlagsRef = useRef({ camera: media.camera, microphone: media.microphone });
+  mediaFlagsRef.current = { camera: media.camera, microphone: media.microphone };
   useFairShuffle(joined ? liveView : null, connected);
 
   joinedRef.current = joined;
@@ -152,6 +161,11 @@ function LiveApp() {
   };
 
   const enterTable = useCallback((result: JoinResult) => {
+    replacedRef.current = false;
+    setReplaced(false);
+    // Server môže mať príznaky z iného okna (alebo ich zhodil pri výpadku spojenia) — podľa nich ostatní púšťajú zvuk
+    // a watchdog mesh siete čaká, či tečie. Pošleme skutočný stav tohto okna.
+    void emit('player:update', { ...mediaFlagsRef.current });
     saveSession(result.code, { playerId: result.playerId, token: result.token });
     setJoined(result);
     setInviteCode(result.code);
@@ -345,7 +359,8 @@ function LiveApp() {
         void resumePending(pendingRef.current.code);
       }
       const current = joinedRef.current;
-      if (current) {
+      // Odstavené okno sa samo nevracia — inak by po výpadku spojenia prebralo hráča späť a odstavilo to druhé.
+      if (current && !replacedRef.current) {
         resume(current.code).then(({ ok }) => {
           if (!ok) {
             setJoined(null);
@@ -356,6 +371,15 @@ function LiveApp() {
       }
     };
     const onDisconnect = () => setConnected(false);
+    const onReplaced = ({ code }: SessionReplacedPayload) => {
+      if (joinedRef.current?.code !== code) {
+        return;
+      }
+      replacedRef.current = true;
+      setReplaced(true);
+      // Mikrofón a kameru používa nové okno; tu ich vypneme (stav na serveri patrí novému oknu, preto bez player:update).
+      media.stopAll();
+    };
     const onIce = ({ iceServers }: Pick<ClientConfig, 'iceServers'>) => {
       if (Array.isArray(iceServers)) {
         setConfig((current) => ({ ...current, iceServers }));
@@ -372,7 +396,9 @@ function LiveApp() {
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
     socket.on('rtc:ice', onIce);
+    socket.on('session:replaced', onReplaced);
     return () => {
+      socket.off('session:replaced', onReplaced);
       socket.off('rtc:ice', onIce);
       socket.off('table:state', onState);
       socket.off('table:meta', onMeta);
@@ -626,10 +652,49 @@ function LiveApp() {
           void call('host:setBanker', { playerId, moveCash: choice === 'move' });
         }
       },
-      kick: async (playerId: string) => {
-        const name = view?.players.find((player) => player.id === playerId)?.name ?? 'hráča';
-        if (await confirmDialog({ title: `Vyhodiť ${name} od stola?`, message: 'Hráč príde o miesto aj účet pri tomto stole.', confirmLabel: 'Vyhodiť', danger: true })) {
+      kick: async (playerId) => {
+        const seated = view?.players.find((player) => player.id === playerId);
+        const member = seated ?? view?.departed?.find((departed) => departed.id === playerId);
+        const name = member?.name ?? 'hráča';
+        const handLive = !!view?.hand && view.hand.street !== 'complete' && !!seated?.inHand && seated.status !== 'folded';
+        const chips = member && view ? formatMoney(member.stack, view.settings.currency) : null;
+        if (
+          await confirmDialog({
+            title: `Vyhodiť ${name} od stola?`,
+            message: [
+              handLive ? 'Z rozohranej ruky hneď zloží karty.' : null,
+              `${chips ? `Žetóny (${chips}) ostanú` : 'Žetóny ostanú'} v transakciách ako odchod a vyrovnajú sa v cashoute.`,
+              'Späť ku stolu sa dostane len so súhlasom hosta.',
+            ]
+              .filter(Boolean)
+              .join('\n'),
+            confirmLabel: 'Vyhodiť',
+            danger: true,
+          })
+        ) {
           void call('host:kick', { playerId });
+        }
+      },
+      merge: async (fromId, toId) => {
+        if (!view) {
+          return;
+        }
+        const members = [...view.players, ...(view.departed ?? [])];
+        const from = members.find((member) => member.id === fromId);
+        const to = members.find((member) => member.id === toId);
+        if (!from || !to) {
+          return;
+        }
+        const chips = formatMoney(from.stack, view.settings.currency);
+        if (
+          await confirmDialog({
+            title: `Zlúčiť ${from.name} do ${to.name}?`,
+            message: `Všetko od hráča ${from.name} (žetóny ${chips}, transakcie, štatistiky, história) sa presunie na hráča ${to.name} a ${from.name} zo stola úplne zmizne.\nPouži, keď sa niekto pripojil z iného zariadenia ako nový hráč.`,
+            confirmLabel: 'Zlúčiť',
+            danger: true,
+          })
+        ) {
+          void call('host:merge', { fromId, toId });
         }
       },
       setAdmin: async (playerId: string, admin: boolean) => {
@@ -647,14 +712,14 @@ function LiveApp() {
           void call('host:setAdmin', { playerId, admin });
         }
       },
-      piggy: async (action: 'start' | 'cancel') => {
-        if (action === 'cancel') {
+      piggy: async (command) => {
+        if (command.action === 'cancel') {
           const piggy = view?.piggy;
           const amount = piggy ? formatMoney(piggy.amount, view!.settings.currency) : null;
           if (
             !(await confirmDialog({
-              title: 'Zrušiť Prasiatko?',
-              message: amount ? `Vstupy (spolu ${amount}) sa vrátia hráčom.` : 'Vstupy sa vrátia hráčom.',
+              title: 'Zrušiť Prasiatko hneď?',
+              message: `${amount ? `Vstupy (spolu ${amount}) sa vrátia hráčom.` : 'Vstupy sa vrátia hráčom.'}${piggy?.series && (piggy.series.permanent || piggy.series.remaining > 1) ? ' Ďalšie hry série sa už nespustia.' : ''}`,
               confirmLabel: 'Zrušiť Prasiatko',
               cancelLabel: 'Nechať',
               danger: true,
@@ -663,7 +728,7 @@ function LiveApp() {
             return;
           }
         }
-        void call('host:piggy', { action });
+        void call('host:piggy', command);
       },
       toLobby: async () => {
         const handRunning = !!view?.hand && view.hand.street !== 'complete';
@@ -704,12 +769,25 @@ function LiveApp() {
     },
   };
 
+  /** „Pokračovať tu“: znova naviaže hráča na tento socket (server odstaví to druhé okno). */
+  const continueHere = async (): Promise<string | null> => {
+    const code = joinedRef.current?.code;
+    if (!code) {
+      return null;
+    }
+    const result = await resume(code);
+    return result.ok ? null : (result.error ?? 'Nepodarilo sa vrátiť ku stolu');
+  };
+
   const peers: MeshPeer[] = useMemo(
-    () => (view?.players ?? []).filter((player) => player.id !== view?.youId && player.connected && player.rtcId).map((player) => ({ playerId: player.id, rtcId: player.rtcId! })),
+    () =>
+      (view?.players ?? [])
+        .filter((player) => player.id !== view?.youId && player.connected && player.rtcId)
+        .map((player) => ({ playerId: player.id, rtcId: player.rtcId!, microphone: player.microphone })),
     [view],
   );
   const pushToTalk = usePushToTalk(media.stream, media.microphone, media.version);
-  const { streams, links } = useMesh(!!joined && !!view, selfRtcId, peers, media.stream, media.version, config.iceServers);
+  const { streams } = useMesh(!!joined && !!view && !replaced, selfRtcId, peers, media.stream, media.version, config.iceServers);
   const voiceSources = useMemo(() => {
     const sources = new Map<string, MediaStream>();
     if (!view) {
@@ -726,6 +804,10 @@ function LiveApp() {
     return sources;
   }, [view, streams, media.microphone, media.stream, media.version]);
   const speaking = useSpeakingIds(voiceSources);
+
+  if (joined && view && replaced) {
+    return <SessionReplacedScreen onContinue={continueHere} />;
+  }
 
   if (joined && view) {
     const isLocalhost = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
@@ -744,7 +826,6 @@ function LiveApp() {
           view={view}
           events={events}
           streams={streams}
-          links={links}
           localStream={media.stream}
           speaking={speaking}
           camera={media.camera}
@@ -759,10 +840,7 @@ function LiveApp() {
           pushToTalk={pushToTalk}
         />
         <div className="remote-audio" aria-hidden>
-          {[...streams.entries()].map(([playerId, stream]) => {
-            const player = view.players.find((candidate) => candidate.id === playerId);
-            return player?.microphone ? <RemoteAudio key={playerId} stream={stream} /> : null;
-          })}
+          {[...streams.entries()].map(([playerId, stream]) => (hasLiveAudio(stream) ? <RemoteAudio key={playerId} stream={stream} playerId={playerId} /> : null))}
         </div>
       </>
     );

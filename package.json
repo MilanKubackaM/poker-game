@@ -1,6 +1,6 @@
 {
   "name": "poker-night",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "Online poker table for friends with webcams",

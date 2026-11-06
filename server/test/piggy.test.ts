@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Avatar, Card, TableEvent, TableSettings } from '../../shared/types';
-import { DEFAULT_SETTINGS, HAND_PAUSE_MS, MODE_INTRO_TIMEOUT_SEC, PIGGY_CELEBRATION_MS, PIGGY_TARGET_WINS } from '../../shared/constants';
+import type { Avatar, Card, PiggyCommand, TableEvent, TableSettings } from '../../shared/types';
+import { DEFAULT_SETTINGS, HAND_PAUSE_MS, MAX_PIGGY_GAMES, MODE_INTRO_TIMEOUT_SEC, PIGGY_CELEBRATION_MS, PIGGY_TARGET_WINS } from '../../shared/constants';
 import { formatMoney } from '../../shared/money';
 import { Table, type TableHooks, type TablePlayer, type TableSnapshot } from '../Table';
 import { stackDeck, TEST_BUY_IN, buyIn, setTestBuyIn } from './helpers';
@@ -138,17 +138,29 @@ function totalChips(table: Table): number {
 }
 
 /** Traja hráči na miestach 0–2, dealer prvej ruky na mieste 0, Prasiatko spustené v čakárni a úvod potvrdený. */
-function piggyGame(settings: Partial<TableSettings> = {}): { table: Table; events: TableEvent[]; a: TablePlayer; b: TablePlayer; c: TablePlayer } {
+function piggyGame(
+  settings: Partial<TableSettings> = {},
+  command: PiggyCommand = { action: 'start' },
+): { table: Table; events: TableEvent[]; a: TablePlayer; b: TablePlayer; c: TablePlayer } {
   const { table, events } = createTable(settings);
   const a = join(table, 'Adam');
   const b = join(table, 'Bea');
   const c = join(table, 'Cyril');
-  expect(table.hostPiggy('start').ok).toBe(true);
+  expect(table.hostPiggy(command).ok).toBe(true);
   startGame(table);
   expect(table.modeIntro?.mode).toBe('piggy');
   ackIntros(table);
   return { table, events, a, b, c };
 }
+
+/** Dohrá bežiacu ruku tak, že `winner` práve získa posledný krúžok a vyhrá hru Prasiatka. */
+function finishGame(table: Table, winner: TablePlayer): void {
+  table.piggy!.wins[winner.id] = table.piggy!.target - 1;
+  winHand(table, winner);
+  expect(table.piggy?.status).toBe('finished');
+}
+
+const texts = (events: TableEvent[]) => events.map((event) => event.text);
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -294,18 +306,18 @@ describe('piggy cancel, joiners and leavers', () => {
     table.leave(c);
     const before = { a: a.stack, b: b.stack };
     expect(table.piggy!.amount).toBe(60);
-    expect(table.hostPiggy('cancel').ok).toBe(true);
+    expect(table.hostPiggy({ action: 'cancel' }).ok).toBe(true);
     expect(table.piggy).toBeNull();
     expect(a.stack).toBe(before.a + 30);
     expect(b.stack).toBe(before.b + 30);
     expect(events.map((event) => event.text)).toContain('Host ruší Prasiatko — vstupy sa vracajú');
-    expect(table.hostPiggy('cancel')).toEqual({ ok: false, error: 'Prasiatko nebeží' });
+    expect(table.hostPiggy({ action: 'cancel' })).toEqual({ ok: false, error: 'Prasiatko nebeží' });
   });
 
   it('refunds as pending chips during a hand and keeps chips conserved', () => {
     const { table, a, b } = piggyGame();
     const total = totalChips(table);
-    expect(table.hostPiggy('cancel').ok).toBe(true);
+    expect(table.hostPiggy({ action: 'cancel' }).ok).toBe(true);
     expect(a.pendingChips).toBe(20);
     expect(totalChips(table)).toBe(total);
     winHand(table, b);
@@ -319,12 +331,12 @@ describe('piggy cancel, joiners and leavers', () => {
     const { table } = createTable();
     join(table, 'Adam');
     join(table, 'Bea');
-    expect(table.hostPiggy('start').ok).toBe(true);
-    expect(table.hostPiggy('start')).toEqual({ ok: false, error: 'Prasiatko už beží' });
-    expect(table.hostPiggy('cancel').ok).toBe(true);
+    expect(table.hostPiggy({ action: 'start' }).ok).toBe(true);
+    expect(table.hostPiggy({ action: 'start' })).toEqual({ ok: false, error: 'Prasiatko už beží' });
+    expect(table.hostPiggy({ action: 'cancel' }).ok).toBe(true);
     expect(table.hostStart().ok).toBe(true);
-    expect(table.hostPiggy('start')).toEqual({ ok: false, error: 'Počas rozhodovania o dealer buttone sa Prasiatko nedá spustiť' });
-    expect(table.hostPiggy('nope' as 'start')).toEqual({ ok: false, error: 'Neplatná voľba' });
+    expect(table.hostPiggy({ action: 'start' })).toEqual({ ok: false, error: 'Počas rozhodovania o dealer buttone sa Prasiatko nedá spustiť' });
+    expect(table.hostPiggy({ action: 'nope' } as unknown as PiggyCommand)).toEqual({ ok: false, error: 'Neplatná voľba' });
   });
 
   it('starts mid-game from the next hand; a joiner gets 0 wins from their first dealt hand, a leaver’s wins drop', () => {
@@ -334,7 +346,7 @@ describe('piggy cancel, joiners and leavers', () => {
     const c = join(table, 'Cyril');
     startGame(table);
     expect(inHand(table)).toBe(true);
-    expect(table.hostPiggy('start').ok).toBe(true);
+    expect(table.hostPiggy({ action: 'start' }).ok).toBe(true);
     expect(table.piggy!.startedAtHand).toBe(2);
     expect(events.map((event) => event.text)).toContain(`Host spúšťa Prasiatko — vstup ${money(20)} do prasiatka pred každou rukou, prvý s 3 výhrami berie všetko`);
     winHand(table, a);
@@ -413,6 +425,176 @@ describe('piggy persistence', () => {
     expect(restored.piggy).toBeNull();
     expect(restored.view(a.id).modeIntro).toBeNull();
   });
+
+  it('keeps the series of a running piggy and loads older files as a single game', () => {
+    const { table, a } = piggyGame({}, { action: 'start', games: 3 });
+    winHand(table, a);
+    expect(table.hostPiggy({ action: 'stop' }).ok).toBe(true);
+    const restored = roundTrip(table);
+    expect(restored.piggy!.series).toEqual({ games: 3, remaining: 3, permanent: false, stopping: true });
+    expect(restored.view(a.id).piggy!.series).toEqual({ remaining: 3, permanent: false, stopping: true, total: 3 });
+
+    const snapshot = JSON.parse(JSON.stringify(table.toSnapshot())) as TableSnapshot;
+    for (const key of ['games', 'remaining', 'permanent', 'stopping'] as const) {
+      delete snapshot.piggy![key];
+    }
+    const legacy = Table.fromSnapshot(snapshot, hooks);
+    current.push(legacy);
+    expect(legacy.view(a.id).piggy!.series).toEqual({ remaining: 1, permanent: false, stopping: false, total: 1 });
+  });
+
+  it('saved during the celebration of a continuing series, it restores the next game already', () => {
+    const { table, a, b, c } = piggyGame({}, { action: 'start', permanent: true });
+    finishGame(table, a);
+    const restored = roundTrip(table);
+    expect(restored.piggy).toMatchObject({ status: 'running', amount: 0, contributed: {}, wins: { [a.id]: 0, [b.id]: 0, [c.id]: 0 }, startedAtHand: 2 });
+    expect(restored.view(a.id).piggy!.series).toEqual({ remaining: 1, permanent: true, stopping: false, total: 0 });
+    expect(restored.players.get(a.id)!.stack + restored.players.get(b.id)!.stack + restored.players.get(c.id)!.stack).toBe(6000);
+  });
+});
+
+describe('piggy series', () => {
+  it('starts the next game of a counted series by itself — entry is the current BB, circles reset, rules not shown again', () => {
+    const { table, events, a, b, c } = piggyGame({}, { action: 'start', games: 2 });
+    expect(texts(events)).toContain(`Host spúšťa Prasiatko na 2 hry za sebou — vstup ${money(20)} do prasiatka pred každou rukou, prvý s 3 výhrami berie všetko`);
+    expect(table.view(a.id).piggy!.series).toMatchObject({ remaining: 2, permanent: false, stopping: false });
+    finishGame(table, a);
+    expect(table.piggy!.winners).toEqual([{ playerId: a.id, playerName: 'Adam', amount: 60 }]);
+    expect(table.hostSettings({ smallBlind: 20, bigBlind: 40 }).ok).toBe(true);
+
+    vi.advanceTimersByTime(PIGGY_CELEBRATION_MS);
+    expect(table.modeIntro).toBeNull();
+    expect(inHand(table)).toBe(true);
+    expect(table.piggy).toMatchObject({ status: 'running', entry: 40, amount: 120, startedAtHand: 2, winners: [] });
+    expect(table.piggy!.wins).toEqual({ [a.id]: 0, [b.id]: 0, [c.id]: 0 });
+    expect(table.piggy!.contributed).toEqual({ [a.id]: 40, [b.id]: 40, [c.id]: 40 });
+    expect(table.engine!.totalPot).toBe(60);
+    expect(table.view(b.id).piggy!.series).toEqual({ remaining: 1, permanent: false, stopping: false, total: 2 });
+    expect(texts(events)).toContain(`Prasiatko — ďalšia hra (2/2), vstup ${money(40)}`);
+    expect(texts(events).filter((text) => text.startsWith('Nový mód: Prasiatko'))).toHaveLength(1);
+    expect(totalChips(table)).toBe(6000);
+
+    finishGame(table, b);
+    vi.advanceTimersByTime(PIGGY_CELEBRATION_MS);
+    expect(table.piggy).toBeNull();
+    expect(texts(events)).toContain('Séria Prasiatka skončila');
+    expect(inHand(table)).toBe(true);
+    expect(table.engine!.totalPot).toBe(60);
+    expect(totalChips(table)).toBe(6000);
+  });
+
+  it('runs permanently until the host stops it; stop lets the running game finish', () => {
+    const { table, events, a, b } = piggyGame({}, { action: 'start', permanent: true, games: 999 });
+    expect(texts(events)).toContain(`Host spúšťa Prasiatko natrvalo — vstup ${money(20)} do prasiatka pred každou rukou, prvý s 3 výhrami berie všetko`);
+    for (let game = 0; game < 3; game++) {
+      finishGame(table, a);
+      vi.advanceTimersByTime(PIGGY_CELEBRATION_MS);
+      expect(table.piggy).toMatchObject({ status: 'running', amount: 60 });
+      expect(table.view(a.id).piggy!.series).toEqual({ remaining: 1, permanent: true, stopping: false, total: 0 });
+    }
+    expect(texts(events).filter((text) => text === `Prasiatko — ďalšia hra (natrvalo), vstup ${money(20)}`)).toHaveLength(3);
+    expect(texts(events).filter((text) => text.startsWith('Nový mód: Prasiatko'))).toHaveLength(1);
+
+    expect(table.hostPiggy({ action: 'stop' })).toEqual({ ok: true });
+    expect(texts(events)).toContain('Host ukončí Prasiatko po dohraní tejto hry — ďalšia sa už nespustí');
+    expect(table.view(a.id).piggy!.series).toEqual({ remaining: 1, permanent: true, stopping: true, total: 0 });
+    expect(table.hostPiggy({ action: 'stop' })).toEqual({ ok: false, error: 'Prasiatko už končí po tejto hre' });
+    winHand(table, b);
+    nextHand(table);
+    expect(table.piggy).toMatchObject({ status: 'running', amount: 120 });
+    finishGame(table, a);
+    vi.advanceTimersByTime(PIGGY_CELEBRATION_MS);
+    expect(table.piggy).toBeNull();
+    expect(texts(events)).toContain('Séria Prasiatka skončila');
+    expect(totalChips(table)).toBe(6000);
+  });
+
+  it('stop or cancel during the celebration ends the series without a refund; a single finished game refuses both', () => {
+    const stopped = piggyGame({}, { action: 'start', games: 3 });
+    finishGame(stopped.table, stopped.a);
+    const stacks = [stopped.a, stopped.b, stopped.c].map((player) => player.stack);
+    expect(stopped.table.hostPiggy({ action: 'stop' })).toEqual({ ok: true });
+    expect(texts(stopped.events)).toContain('Host ukončuje sériu Prasiatka — ďalšia hra sa nespustí');
+    expect(stopped.table.piggy?.status).toBe('finished');
+    expect(stopped.table.hostPiggy({ action: 'stop' })).toEqual({ ok: false, error: 'Prasiatko už končí po tejto hre' });
+    expect([stopped.a, stopped.b, stopped.c].map((player) => player.stack)).toEqual(stacks);
+    vi.advanceTimersByTime(PIGGY_CELEBRATION_MS);
+    expect(stopped.table.piggy).toBeNull();
+    expect(stopped.table.engine!.totalPot).toBe(30);
+
+    const cancelled = piggyGame({}, { action: 'start', games: 3 });
+    finishGame(cancelled.table, cancelled.a);
+    expect(cancelled.table.hostPiggy({ action: 'cancel' })).toEqual({ ok: true });
+    expect(texts(cancelled.events)).toContain('Host ruší sériu Prasiatka — ďalšia hra sa nespustí');
+    vi.advanceTimersByTime(PIGGY_CELEBRATION_MS);
+    expect(cancelled.table.piggy).toBeNull();
+    expect(totalChips(cancelled.table)).toBe(6000);
+
+    const single = piggyGame();
+    finishGame(single.table, single.a);
+    expect(single.table.hostPiggy({ action: 'stop' })).toEqual({ ok: false, error: 'Prasiatko už skončilo' });
+    expect(single.table.hostPiggy({ action: 'cancel' })).toEqual({ ok: false, error: 'Prasiatko nebeží' });
+    vi.advanceTimersByTime(PIGGY_CELEBRATION_MS);
+    expect(single.table.piggy).toBeNull();
+    expect(texts(single.events)).not.toContain('Séria Prasiatka skončila');
+  });
+
+  it('cancel of a running series refunds the entries and no next game starts', () => {
+    const { table, a, b } = piggyGame({}, { action: 'start', games: 5 });
+    winHand(table, a);
+    const before = { a: a.stack, b: b.stack };
+    expect(table.hostPiggy({ action: 'cancel' }).ok).toBe(true);
+    expect(table.piggy).toBeNull();
+    expect(a.stack).toBe(before.a + 20);
+    expect(b.stack).toBe(before.b + 20);
+    vi.advanceTimersByTime(PIGGY_CELEBRATION_MS);
+    expect(table.piggy).toBeNull();
+    expect(table.engine!.totalPot).toBe(30);
+    expect(totalChips(table)).toBe(6000);
+  });
+
+  it('validates the number of games (ignored when permanent)', () => {
+    const { table } = createTable();
+    join(table, 'Adam');
+    join(table, 'Bea');
+    const error = { ok: false, error: `Počet hier musí byť 1 až ${MAX_PIGGY_GAMES}` };
+    expect(table.hostPiggy({ action: 'start', games: 0 })).toEqual(error);
+    expect(table.hostPiggy({ action: 'start', games: MAX_PIGGY_GAMES + 1 })).toEqual(error);
+    expect(table.hostPiggy({ action: 'start', games: 2.5 })).toEqual(error);
+    expect(table.hostPiggy({ action: 'start', games: '3' } as unknown as PiggyCommand)).toEqual(error);
+    expect(table.hostPiggy({ action: 'start', games: MAX_PIGGY_GAMES }).ok).toBe(true);
+    expect(table.view(table.hostId).piggy!.series).toMatchObject({ remaining: MAX_PIGGY_GAMES, permanent: false, stopping: false });
+    expect(table.hostPiggy({ action: 'cancel' }).ok).toBe(true);
+    expect(table.hostPiggy({ action: 'stop' })).toEqual({ ok: false, error: 'Prasiatko nebeží' });
+    expect(table.hostPiggy({ action: 'start', games: 0, permanent: true }).ok).toBe(true);
+    expect(table.view(table.hostId).piggy!.series).toEqual({ remaining: 1, permanent: true, stopping: false, total: 0 });
+  });
+
+  it('a short-stacked player sits out across games of the series without repeated notices', () => {
+    const { table, events, a, b, c } = piggyGame({}, { action: 'start', games: 3 });
+    winHand(table, b);
+    expect(table.bankChips(c, -(c.stack - 20)).ok).toBe(true);
+    nextHand(table);
+    expect(table.engine!.player(c.id)).toBeUndefined();
+    finishGame(table, a);
+    vi.advanceTimersByTime(PIGGY_CELEBRATION_MS);
+    expect(table.piggy).toMatchObject({ status: 'running', amount: 40 });
+    expect(table.engine!.player(c.id)).toBeUndefined();
+    expect(c).toMatchObject({ stack: 20, sittingOut: true });
+    expect(texts(events).filter((text) => text.startsWith('Cyril nemá dosť žetónov na vstup do prasiatka'))).toHaveLength(1);
+  });
+
+  it('combines with a permanent Omaha special round', () => {
+    const { table, a } = piggyGame({}, { action: 'start', games: 2 });
+    expect(table.hostNextHand({ variant: 'omaha', permanent: true }).ok).toBe(true);
+    finishGame(table, a);
+    vi.advanceTimersByTime(PIGGY_CELEBRATION_MS);
+    expect(table.modeIntro?.mode).toBe('omaha');
+    ackIntros(table);
+    expect(table.engine!.rules.variant).toBe('omaha');
+    expect(table.piggy).toMatchObject({ status: 'running', amount: 60 });
+    expect(table.nextHand).toEqual({ variant: 'omaha', permanent: true });
+  });
 });
 
 describe('mode intro', () => {
@@ -421,7 +603,7 @@ describe('mode intro', () => {
     const a = join(table, 'Adam');
     const b = join(table, 'Bea');
     const c = join(table, 'Cyril');
-    expect(table.hostPiggy('start').ok).toBe(true);
+    expect(table.hostPiggy({ action: 'start' }).ok).toBe(true);
     startGame(table);
     expect(inHand(table)).toBe(false);
     const intro = table.view(a.id).modeIntro!;
@@ -450,7 +632,7 @@ describe('mode intro', () => {
     const a = join(table, 'Adam');
     const b = join(table, 'Bea');
     const c = join(table, 'Cyril');
-    expect(table.hostPiggy('start').ok).toBe(true);
+    expect(table.hostPiggy({ action: 'start' }).ok).toBe(true);
     startGame(table);
     const late = join(table, 'Dana');
     expect(table.modeAck(late)).toEqual({ ok: false, error: 'Nie si účastníkom tejto ruky' });
@@ -567,26 +749,79 @@ describe('mode intro', () => {
   });
 });
 
-describe('seat change while owing blinds', () => {
-  it('a playing player who moves seats mid-game waits for the BB; a standing player keeps owing; heads-up is free', () => {
-    const { table, events } = createTable();
+describe('seat change', () => {
+  const LOCKED = 'Počas hry sa presadiť nedá — miesto sa mení len na začiatku hry';
+
+  it('a player who has been dealt in keeps the seat until the table returns to the lobby', () => {
+    const { table } = createTable();
     const a = join(table, 'Adam');
-    const b = join(table, 'Bea');
+    join(table, 'Bea');
     const c = join(table, 'Cyril');
     const d = join(table, 'Dana');
     startGame(table);
     winHand(table, a);
-    expect(table.changeSeat(d, 7).ok).toBe(true);
-    expect(d).toMatchObject({ seat: 7, sittingOut: true, missedBlinds: 'big', returnMode: 'wait-bb' });
-    expect(events.map((event) => event.text)).toContain('Dana mení miesto — čaká na big blind (alebo ho môže zaplatiť hneď)');
+    expect(table.view(d.id).canChangeSeat).toBe(false);
+    expect(table.changeSeat(d, 7)).toEqual({ ok: false, error: LOCKED });
     table.setSittingOut(c, true);
-    expect(table.changeSeat(c, 5).ok).toBe(true);
-    expect(c).toMatchObject({ seat: 5, sittingOut: true, missedBlinds: 'big', returnMode: null });
-    expect(table.setSittingOut(c, false)).toEqual({ ok: false, error: 'Najprv si vyber, či počkáš na big blind alebo zaplatíš' });
-    table.leave(c);
-    table.leave(d);
-    expect(table.changeSeat(b, 4).ok).toBe(true);
-    expect(b).toMatchObject({ seat: 4, sittingOut: false, missedBlinds: 'none' });
+    expect(table.changeSeat(c, 5)).toEqual({ ok: false, error: LOCKED });
+    expect([c.seat, d.seat]).toEqual([2, 3]);
+    expect(table.hostToLobby().ok).toBe(true);
+    expect(table.view(d.id).canChangeSeat).toBe(true);
+    expect(table.changeSeat(d, 7).ok).toBe(true);
+    expect(d.seat).toBe(7);
+  });
+
+  it('a newcomer may pick a seat mid-game until the first hand they are dealt', () => {
+    const { table } = createTable();
+    const a = join(table, 'Adam');
+    join(table, 'Bea');
+    join(table, 'Cyril');
+    startGame(table);
+    winHand(table, a);
+    const eva = join(table, 'Eva');
+    expect(table.view(eva.id).canChangeSeat).toBe(true);
+    expect(table.changeSeat(eva, 6).ok).toBe(true);
+    expect(eva).toMatchObject({ seat: 6, sittingOut: true, missedBlinds: 'big' });
+    expect(table.setSittingOut(eva, true).ok).toBe(true);
+    expect(table.returnToGame(eva, 'post').ok).toBe(true);
+    vi.advanceTimersByTime(HAND_PAUSE_MS);
+    expect(table.engine?.player(eva.id)).toBeTruthy();
+    winHand(table, a);
+    expect(table.changeSeat(eva, 8)).toEqual({ ok: false, error: LOCKED });
+    const restored = Table.fromSnapshot(table.toSnapshot(), { onChange: () => undefined, onEvent: () => undefined, onRemoved: () => undefined });
+    current.push(restored);
+    expect(restored.view(eva.id).canChangeSeat).toBe(false);
+  });
+
+  it('unlocks seats when a restart restores the table into the lobby', () => {
+    const { table } = createTable();
+    const a = join(table, 'Adam');
+    join(table, 'Bea');
+    startGame(table);
+    expect(inHand(table)).toBe(true);
+    expect(table.hostToLobby().ok).toBe(true);
+    const snapshot = table.toSnapshot();
+    expect(snapshot.returnToLobbyPending).toBe(true);
+    const restored = Table.fromSnapshot(snapshot, { onChange: () => undefined, onEvent: () => undefined, onRemoved: () => undefined });
+    current.push(restored);
+    expect(restored.phase).toBe('lobby');
+    expect(restored.view(a.id).canChangeSeat).toBe(true);
+  });
+
+  it('is locked in the draw once the button is decided', () => {
+    const { table } = createTable();
+    const a = join(table, 'Adam');
+    const b = join(table, 'Bea');
+    expect(table.hostStart().ok).toBe(true);
+    expect(table.changeSeat(a, 5).ok).toBe(true);
+    expect(table.hostDealerChoice('draw').ok).toBe(true);
+    table.drawAck(a);
+    table.drawAck(b);
+    expect(table.drawPick(a, 0).ok).toBe(true);
+    expect(table.changeSeat(a, 6).ok).toBe(true);
+    expect(table.drawPick(b, 1).ok).toBe(true);
+    expect(table.draw?.stage).toBe('done');
+    expect(table.changeSeat(a, 7)).toEqual({ ok: false, error: 'Dealer button je už rozhodnutý — miesta sa nemenia' });
   });
 
   it('changes nothing in the lobby or before the first hand', () => {

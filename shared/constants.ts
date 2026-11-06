@@ -9,7 +9,7 @@ export const HAND_PAUSE_MS = 5000;
 export const RUNOUT_STEP_MS = 2500;
 /** Čas na voľbu, koľkokrát sa po all-in dorozdá board (1×/2×/3×). */
 export const RUN_VOTE_SEC = 12;
-export const DISCARD_TIMEOUT_SEC = 20;
+export const DISCARD_TIMEOUT_SEC = 10;
 export const MAX_NOTE_LENGTH = 120;
 
 /** Losovanie o dealer button. */
@@ -39,13 +39,19 @@ export const MAX_SUMMARY_REQUEST = 50;
 /** Mód Prasiatko: počet výhier na zisk prasiatka, dĺžka oslavy. */
 export const PIGGY_TARGET_WINS = 3;
 export const PIGGY_CELEBRATION_MS = 6000;
+/** Najviac hier Prasiatka za sebou pri spustení na počet (natrvalo = bez limitu). */
+export const MAX_PIGGY_GAMES = 20;
+
+/** Jukebox: najviac čakajúcich pesničiek, najdlhšia pesnička. */
+export const JUKEBOX_MAX_QUEUE = 5;
+export const JUKEBOX_MAX_DURATION_SEC = 600;
 /** Dialóg s pravidlami módu: max. čakanie na „Rozumiem“. */
 export const MODE_INTRO_TIMEOUT_SEC = 60;
 
-/** Timebank: hranice a pomer pripísania ušetreného základného času (1/2). */
+/** Timebank: hranice a pomer pripísania ušetreného základného času (1/4). */
 export const TIME_BANK_MIN_SEC = 5;
 export const TIME_BANK_MAX_SEC = 200;
-export const TIME_BANK_SAVED_RATIO = 0.5;
+export const TIME_BANK_SAVED_RATIO = 0.25;
 
 export const CURRENCIES: Currency[] = ['EUR', 'CZK'];
 

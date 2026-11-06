@@ -5,14 +5,16 @@ import type { TableHandlers, TableUiState } from '../components/TableScreen';
 import { GameScreen } from '../components/WaitingRoom';
 import { ConfirmHost } from '../components/ConfirmDialog';
 import type { ChatToastItem } from '../hooks/useChatToasts';
-import type { LinkInfo } from '../hooks/useMesh';
+import { MyHandsContext } from '../myHands';
 import type { Profile } from '../storage';
 import {
   DEMO_LEFT_TABLES,
   DEMO_TABLE_ERRORS,
+  demoDeparted,
   demoDraw,
   demoEvents,
   demoModeIntro,
+  demoMyHands,
   demoPiggy,
   demoHand,
   demoLeaderboard,
@@ -94,6 +96,7 @@ const handlers: TableHandlers = {
     saveSettings: async () => null,
     nextHand: noop,
     kick: noop,
+    merge: noop,
     setBanker: noop,
     setAdmin: noop,
     piggy: noop,
@@ -107,11 +110,6 @@ const handlers: TableHandlers = {
     undo: async () => null,
   },
 };
-
-const DEMO_LINKS = new Map<string, LinkInfo>([
-  ['p1', { relayed: true, path: 'relay/tls→srflx', rttMs: 140, lossPct: 0.4 }],
-  ['p3', { relayed: false, path: 'srflx/udp→srflx', rttMs: 380, lossPct: 6.2 }],
-]);
 
 interface Scenario {
   view: TableView;
@@ -151,7 +149,6 @@ const SCREENS = [
   'pre-actions',
   'run-vote',
   'run-twice',
-  'net',
   'to-lobby',
   'chat-toasts',
   'away',
@@ -168,6 +165,12 @@ const SCREENS = [
   'omaha-showdown',
   'table-roles',
   'speaking',
+  'seat-menu',
+  'seat-menu-guest',
+  'merge-dialog',
+  'host-departed',
+  'room-departed',
+  'host-modes',
   'help',
 ];
 
@@ -275,8 +278,6 @@ function scenario(screen: string): Scenario | null {
         }),
       };
     }
-    case 'net':
-      return { view: demoView({ legal: null, hand: demoHand({ toActId: 'p3' }) }) };
     case 'pre-actions':
       return { view: demoView({ legal: null, hand: demoHand({ toActId: 'p3' }) }) };
     case 'chat-toasts':
@@ -297,7 +298,7 @@ function scenario(screen: string): Scenario | null {
         ],
       };
     case 'history':
-      return { view: demoView({ legal: null, hand: demoHand({ toActId: 'p3' }) }), ui: { chatOpen: true, sideTab: 'stats', statsTab: 'history' } };
+      return { view: demoView({ legal: null, hand: demoHand({ toActId: 'p3' }) }), ui: { chatOpen: true, sideTab: 'history' } };
     case 'host-rules':
       return { view: demoView(), ui: { hostOpen: true, hostTab: 'rules' } };
     case 'delete-table':
@@ -548,6 +549,24 @@ function scenario(screen: string): Scenario | null {
     }
     case 'host-piggy':
       return { view: demoView({ piggy: demoPiggy() }), ui: { hostOpen: true, hostTab: 'game' } };
+    case 'seat-menu':
+    case 'merge-dialog': {
+      // Katka je offline a nie je v ruke — host ju môže zlúčiť do iného hráča.
+      const players = demoPlayers().map((player) => (player.id === 'p5' ? { ...player, inHand: false, status: null, lastAction: null } : player));
+      return { view: demoView({ players, departed: demoDeparted() }), ui: screen === 'seat-menu' ? { seatMenu: 'p5' } : { mergeFrom: 'p5' } };
+    }
+    case 'seat-menu-guest':
+      return { view: demoView({ youId: 'p2', legal: null }), ui: { seatMenu: 'p3' } };
+    case 'host-departed':
+      return { view: demoView({ departed: demoDeparted() }), ui: { hostOpen: true, hostTab: 'players' } };
+    case 'room-departed':
+      return { view: preGameView({ departed: demoDeparted() }), events: lobbyEvents() };
+    case 'host-modes':
+      // Séria 5 hier, beží 3. hra.
+      return {
+        view: demoView({ nextHand: { variant: 'pineapple', permanent: true }, piggy: demoPiggy({ series: { remaining: 3, permanent: false, stopping: false, total: 5 } }) }),
+        ui: { hostOpen: true, hostTab: 'game' },
+      };
     case 'room-piggy': {
       const players = lobbyPlayers().map((player) => (player.id === 'p2' ? { ...player, away: true } : player.id === 'p3' ? { ...player, sittingOut: true } : player));
       return {
@@ -591,6 +610,9 @@ function scenario(screen: string): Scenario | null {
       return null;
   }
 }
+
+/** Demo nemá server — moje karty v histórii sú ukážkové (inak by sa História pokúsila pripojiť cez socket). */
+const loadDemoMyHands = () => Promise.resolve(demoMyHands());
 
 export function DemoApp({ screen }: { screen: string }) {
   const [profile, setProfile] = useState<Profile>({ name: 'Milan', avatar: { emoji: '🦊', color: '#e76f51' } });
@@ -642,13 +664,12 @@ export function DemoApp({ screen }: { screen: string }) {
   }
 
   return (
-    <>
+    <MyHandsContext.Provider value={loadDemoMyHands}>
       <ConfirmHost />
       <GameScreen
         view={data.view}
         events={data.events ?? demoEvents()}
         streams={streams}
-        links={screen === 'net' ? DEMO_LINKS : undefined}
         localStream={localStream}
         speaking={new Set(new URLSearchParams(window.location.search).get('speaking')?.split(',') ?? data.speaking ?? [])}
         camera
@@ -662,6 +683,6 @@ export function DemoApp({ screen }: { screen: string }) {
         chatToasts={data.chatToasts}
         onClearChatToasts={noop}
       />
-    </>
+    </MyHandsContext.Provider>
   );
 }

@@ -317,7 +317,7 @@ describe('bankár — cashout', () => {
 
   it('kým sú žetóny v Prasiatku, výplaty sa nepotvrdzujú', () => {
     const { table, milan, juraj, peto } = scenarioLost();
-    table.piggy = { status: 'running', amount: 40, entry: 20, target: 3, wins: {}, contributed: {}, startedAtHand: 1, winners: [], handEntries: null };
+    table.piggy = { status: 'running', amount: 40, entry: 20, target: 3, wins: {}, contributed: {}, startedAtHand: 1, winners: [], handEntries: null, series: { games: 1, remaining: 1, permanent: false, stopping: false } };
     expect(table.bankSettle(milan, 'payout', peto.id, juraj.id, 100)).toEqual({ ok: false, error: 'V Prasiatku sú žetóny — výplaty potvrdíš po jeho výplate alebo zrušení' });
     expect(table.bankSettle(milan, 'debt', peto.id, milan.id, 2000).ok).toBe(true);
     table.piggy = null;

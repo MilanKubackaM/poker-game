@@ -1,4 +1,4 @@
-import type { Avatar, Card, DrawView, ModeIntroView, PiggyView, HandHistoryEntry, HandHistoryWinner, HandView, LeaderboardRow, LedgerEntry, SeatPlayerView, TableEvent, TableSummary, TableView, Variant } from '../../../shared/types';
+import type { Avatar, Card, DepartedMemberView, DrawView, ModeIntroView, PiggyView, HandHistoryEntry, HandHistoryWinner, HandView, LeaderboardRow, LedgerEntry, MyHandRecord, SeatPlayerView, TableEvent, TableSummary, TableView, Variant } from '../../../shared/types';
 import { DEFAULT_SETTINGS } from '../../../shared/constants';
 
 const base = (overrides: Partial<SeatPlayerView> & Pick<SeatPlayerView, 'id' | 'name' | 'seat' | 'avatar'>): SeatPlayerView => ({
@@ -64,6 +64,8 @@ export function demoView(overrides: Partial<TableView> = {}): TableView {
     hostId: 'me',
     bankerId: 'me',
     youId: 'me',
+    canChangeSeat: false,
+    departed: [],
     settings: { ...DEFAULT_SETTINGS, name: 'Piatkový poker' },
     nextHand: null,
     running: true,
@@ -229,6 +231,8 @@ interface HandSpec {
   winners: HandHistoryWinner[];
   noShowdown?: boolean;
   bounty?: [string, number];
+  /** Výplata Prasiatka (hráč, suma). */
+  piggy?: [string, number][];
 }
 
 /** Ručne napísané ruky #15–#26 (najnovšia na konci) — 7-2 bonus, delený pot, Omaha, Pineapple, výhra bez showdownu. */
@@ -253,7 +257,7 @@ const NOTABLE_HANDS: HandSpec[] = [
     winners: [win('p3', 560, 'Postupka do esa', ['Kc', 'Jh', '3d', '8s']), win('me', 560, 'Postupka do esa', ['Kd', 'Js', '9c', '2h'])],
   },
   { sevenDeuce: true, dealer: 'p2', board: ['7s', '2h', 'Kc', '9d', '3s'], winners: [win('me', 1240, 'Dva páry — sedmičky a dvojky', ['7d', '2c'])], bounty: ['me', 200] },
-  { dealer: 'p3', board: ['Kd', '9s', '4h', '2c', 'Jd'], winners: [win('p1', 680, 'Pár — králi', ['Ks', 'Qc'])] },
+  { dealer: 'p3', board: ['Kd', '9s', '4h', '2c', 'Jd'], winners: [win('p1', 680, 'Pár — králi', ['Ks', 'Qc'])], piggy: [['p1', 640]] },
 ];
 
 /** Staršie, obyčajné ruky #1–#14, aby história mala aj stránkovanie („Zobraziť ďalšie“). */
@@ -291,7 +295,29 @@ export function demoHistory(): HandHistoryEntry[] {
     wonWithoutShowdown: !!hand.noShowdown,
     winners: hand.winners,
     bounty: hand.bounty ? { winnerName: NAMES[hand.bounty[0]], total: hand.bounty[1] } : null,
+    piggy: hand.piggy ? { winners: hand.piggy.map(([playerId, amount]) => ({ playerId, playerName: NAMES[playerId], amount })) } : null,
   }));
+}
+
+/** Moje karty a výsledok v každej ruke histórie (`history:mine`) — výhry podľa `demoHistory`, inak fold alebo prehra. */
+export function demoMyHands(): MyHandRecord[] {
+  const folds: Card[][] = [
+    ['9c', '4d'],
+    ['Jh', '3s'],
+    ['8d', '2c'],
+    ['Tc', '5h'],
+  ];
+  return demoHistory().map((entry, index) => {
+    const mine = entry.winners.find((winner) => winner.playerId === 'me');
+    if (mine) {
+      return { handNumber: entry.handNumber, cards: mine.cards, net: Math.round(mine.amount * 0.55), folded: false, handDescription: mine.handDescription };
+    }
+    const cards = entry.variant === 'omaha' ? (['Ad', '7s', '5c', '4h'] as Card[]) : folds[index % folds.length];
+    if (index % 3 === 2 && !entry.wonWithoutShowdown && entry.board.length === 5) {
+      return { handNumber: entry.handNumber, cards: ['Qs', 'Td'] as Card[], net: -Math.round(entry.totalPot / 2), folded: false, handDescription: 'Pár — dámy' };
+    }
+    return { handNumber: entry.handNumber, cards, net: index % 2 === 0 ? -20 : 0, folded: true, handDescription: null };
+  });
 }
 
 /** Zodpovedá `demoLedger` a stackom v `demoPlayers`; Tomáš od stola odišiel. */
@@ -352,6 +378,14 @@ export function demoSummaries(): TableSummary[] {
   ];
 }
 
+/** Členovia, ktorí odišli od stola (žetóny uložené) — host ich vidí v sekcii „Odišli od stola“. */
+export function demoDeparted(): DepartedMemberView[] {
+  return [
+    { id: 'd1', name: 'Vilo', avatar: { emoji: '🐺', color: '#264653' }, stack: 1240 },
+    { id: 'd2', name: 'Ferko', avatar: { emoji: '🐸', color: '#06d6a0' }, stack: 0 },
+  ];
+}
+
 /** Prasiatko: 4 odohrané ruky po 0,20 € od piatich hráčov (Peťo je all-in, ale vstup zaplatil). */
 export function demoPiggy(overrides: Partial<PiggyView> = {}): PiggyView {
   return {
@@ -363,6 +397,7 @@ export function demoPiggy(overrides: Partial<PiggyView> = {}): PiggyView {
     contributed: { me: 80, p1: 80, p2: 80, p3: 80, p4: 80, p5: 80 },
     startedAtHand: 24,
     winners: [],
+    series: { remaining: 1, permanent: false, stopping: false, total: 1 },
     ...overrides,
   };
 }

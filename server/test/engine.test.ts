@@ -176,6 +176,27 @@ describe('pineapple', () => {
     expect(engine.street).toBe('flop');
     expect(engine.player('p1')!.hole).toHaveLength(2);
   });
+
+  it('auto-discards a random card using the injected random source', () => {
+    const engine = makeHand({ stacks: [1000, 1000, 1000], rules: { variant: 'pineapple' } });
+    while (engine.street === 'preflop') {
+      const player = engine.toAct!;
+      act(engine, player.id, engine.legalActions(player.id)!.callAmount > 0 ? { type: 'call' } : { type: 'check' });
+    }
+    expect(engine.street).toBe('discard');
+    const holes = engine.players.map((player) => [...player.hole]);
+    expect(engine.autoDiscard('p0', () => 0).ok).toBe(true);
+    expect(engine.autoDiscard('p0', () => 0).ok).toBe(false);
+    const picks = [2, 1];
+    const ranges: number[] = [];
+    engine.autoDiscardRemaining((max) => {
+      ranges.push(max);
+      return picks.shift()!;
+    });
+    expect(ranges).toEqual([3, 3]);
+    expect(engine.street).toBe('flop');
+    expect(engine.players.map((player) => player.hole)).toEqual([holes[0].slice(1), [holes[1][0], holes[1][1]], [holes[2][0], holes[2][2]]]);
+  });
 });
 
 describe('7-2 rule', () => {

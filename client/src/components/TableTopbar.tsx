@@ -3,7 +3,9 @@ import type { SeatPlayerView, TableView } from '../../../shared/types';
 import { VARIANT_LABELS } from '../../../shared/constants';
 import { formatMoney } from '../../../shared/money';
 import { handsLabel } from '../../../shared/plural';
+import { piggySeriesLabel } from './GameModes';
 import { SoundButton, SoundMenuItems, useDismiss } from '../sound';
+import { JukeboxButton } from '../jukebox/Jukebox';
 import { HelpDialog } from './HelpDialog';
 import { CameraIcon } from './MediaIcons';
 import { MicButton } from './MicButton';
@@ -81,23 +83,25 @@ export function TableTopbar(props: TableTopbarProps) {
   const sevenDeuceBounty = sevenDeuceActive ? (handLive ? view.hand!.rules.sevenDeuceBounty : view.settings.sevenDeuceBounty) : null;
   const modeChips: { key: 'variant' | 'next-variant' | 'seven-deuce' | 'piggy'; label: string; title: string }[] = [];
   const liveSpecial = handLive && view.hand!.rules.variant !== view.settings.defaultVariant ? view.hand!.rules.variant : null;
-  const queued = view.nextHand?.variant ? { variant: view.nextHand.variant, hands: view.nextHand.hands ?? 1 } : null;
+  const queued = view.nextHand?.variant ? { variant: view.nextHand.variant, hands: view.nextHand.hands ?? 1, permanent: !!view.nextHand.permanent } : null;
   if (liveSpecial) {
-    const left = 1 + (queued?.variant === liveSpecial ? queued.hands : 0);
+    const continues = queued?.variant === liveSpecial;
+    const left = 1 + (continues ? queued.hands : 0);
     modeChips.push({
       key: 'variant',
-      label: `${VARIANT_LABELS[liveSpecial]} · ${left === 1 ? 'posledné kolo' : `ešte ${handsLabel(left)}`}`,
-      title: 'Špeciálne kolo — počet zahŕňa aj túto ruku',
+      label: `${VARIANT_LABELS[liveSpecial]} · ${continues && queued.permanent ? 'natrvalo' : left === 1 ? 'posledné kolo' : `ešte ${handsLabel(left)}`}`,
+      title: continues && queued.permanent ? 'Špeciálne kolo natrvalo — kým ho host nevypne' : 'Špeciálne kolo — počet zahŕňa aj túto ruku',
     });
   }
   if (queued && queued.variant !== liveSpecial) {
-    modeChips.push({ key: 'next-variant', label: `Ďalej ${VARIANT_LABELS[queued.variant]} · ${handsLabel(queued.hands)}`, title: 'Špeciálne kolo od ďalšej ruky' });
+    modeChips.push({ key: 'next-variant', label: `Ďalej ${VARIANT_LABELS[queued.variant]} · ${queued.permanent ? 'natrvalo' : handsLabel(queued.hands)}`, title: 'Špeciálne kolo od ďalšej ruky' });
   }
   if (sevenDeuceBounty !== null) {
     modeChips.push({ key: 'seven-deuce', label: `7-2 · bonus ${money(sevenDeuceBounty)}`, title: 'Kto vyhrá ruku so 7-2, dostane bonus od každého hráča v ruke' });
   }
   if (view.piggy?.status === 'running') {
-    modeChips.push({ key: 'piggy', label: `🐷 Prasiatko ${money(view.piggy.amount)}`, title: `Prvý s ${view.piggy.target} výhrami berie celé prasiatko` });
+    const series = piggySeriesLabel(view.piggy);
+    modeChips.push({ key: 'piggy', label: `🐷 Prasiatko ${money(view.piggy.amount)}${series ? ` · ${series}` : ''}`, title: `Prvý s ${view.piggy.target} výhrami berie celé prasiatko` });
   }
 
   return (
@@ -131,6 +135,7 @@ export function TableTopbar(props: TableTopbarProps) {
       {children}
       <div className="topbar-right">
         {/* Na mobile je pauza, kamera, mikrofón a zvuk v menu ☰ (`.menu-mobile`) — v lište ostáva chat, štatistiky, host a ☰. */}
+        <JukeboxButton view={view} />
         {me && !sittingOut && (
           <button
             type="button"

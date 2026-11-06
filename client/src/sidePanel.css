@@ -1,0 +1,84 @@
+/*
+ * Bočný panel: jedna úroveň záložiek (Chat · Priebeh · Transakcie · Leaderboard · História · Cashout) a riadok
+ * „moja ruka“ v histórii. Súbor sa načíta pred styles.css, preto majú selektory vyššiu špecificitu než pôvodné
+ * `.side-panel .tabs` / `.side-panel .tab`.
+ */
+
+/* Záložky v mriežke — na 330–360 px paneli vyjdú 2 riadky po 3, žiadna záložka sa neschová za okraj. */
+.side-panel .tabs.side-tabs {
+  overflow: visible;
+  align-items: flex-start;
+}
+
+.side-panel .side-tabs .side-tab-list {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
+  gap: 4px;
+}
+
+.side-panel .side-tabs .side-tab-list .tab {
+  min-width: 0;
+  padding: 7px 6px;
+  font-size: 0.84rem;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Výsledky stola na stránke čakárne — rovnaké záložky ako v paneli */
+.stats .tabs.stats-tabs {
+  padding: 0 0 8px;
+  flex-wrap: wrap;
+}
+
+/* História: moje karty a výsledok v ruke */
+.history-hand .history-mine {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: rgba(232, 194, 110, 0.07);
+  border: 1px dashed rgba(232, 194, 110, 0.32);
+  font-size: 0.82rem;
+  min-width: 0;
+}
+
+.history-hand .history-mine-label {
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--gold);
+}
+
+.history-hand .history-mine-fold {
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(226, 91, 91, 0.55);
+  color: #ffb8b8;
+}
+
+.history-hand .history-mine-net {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.history-hand .history-mine-desc {
+  font-size: 0.78rem;
+}
+
+/* Výhra z Prasiatka — ako riadok 7-2 bonusu */
+.history-hand .history-piggy-line {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #ffb3cf;
+}
