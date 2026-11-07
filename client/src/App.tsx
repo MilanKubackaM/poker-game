@@ -3,6 +3,7 @@ import type {
   Ack,
   ClientConfig,
   DealerChoice,
+  DoubleBoardCommand,
   JoinClosedPayload,
   JoinResult,
   PendingJoin,
@@ -814,6 +815,7 @@ function LiveApp({ account }: { account: AccountView }) {
         }
         void call('host:piggy', command);
       },
+      doubleBoard: (command: DoubleBoardCommand) => void call('host:doubleBoard', command),
       toLobby: async () => {
         const handRunning = !!view?.hand && view.hand.street !== 'complete';
         if (

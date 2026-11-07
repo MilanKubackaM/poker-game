@@ -53,6 +53,8 @@ export interface FairProof {
   /** Rozdaní hráči podľa miest (z nich a z dealera vyplýva poradie rozdávania). */
   seats: { id: string; seat: number }[];
   holeCount: number;
+  /** Double Board: na každej ulici po pálení najprv vrchný, potom spodný board (staršie dôkazy pole nemajú). */
+  doubleBoard?: true;
 }
 
 /** Odpoveď na `fair:proofs`. */
@@ -85,6 +87,8 @@ export interface FairHandRecord {
   board: Card[];
   extraBoards: Card[][];
   runoutBase: number;
+  /** Double Board: spodný board, ako ho hráč videl (staršie záznamy pole nemajú). */
+  secondBoard?: Card[];
   /** Karty, ktoré iní hráči ukázali (showdown, dobrovoľné ukázanie). */
   shown: Record<string, Card[]>;
   /** Zaplatené odkrytie zvyšku boardu. */
@@ -109,6 +113,8 @@ export interface ExpectedDeal {
   holes: Record<string, Card[]>;
   /** Hlavný board, ako by sa dorozdal celý (pálenie, flop, pálenie, turn, pálenie, river). */
   board: Card[];
+  /** Double Board: spodný board (pri jednom boarde prázdny). */
+  secondBoard: Card[];
   /** Index v balíčku, kde začína prvá karta po hlavnom boarde (od neho idú ďalšie behy). */
   afterBoard: number;
   /** Index prvej karty po rozdaní karát hráčom (od neho ide hlavný board). */
@@ -117,9 +123,10 @@ export interface ExpectedDeal {
 
 /**
  * Rozdávanie z vrchu balíčka: hráčom po jednej karte dokola od prvého miesta vľavo od dealera, potom board
- * s pálením pred flopom, turnom aj riverom. Zhoduje sa s `HandEngine.start()` a `dealNextStreet()`.
+ * s pálením pred flopom, turnom aj riverom. Pri Double Board ide na každej ulici po pálení najprv vrchný board, potom
+ * spodný (flop 3 + 3, turn 1 + 1, river 1 + 1). Zhoduje sa s `HandEngine.start()` a `dealNextStreet()`.
  */
-export function expectedDeal(deck: Card[], seats: { id: string; seat: number }[], dealerSeat: number, holeCount: number): ExpectedDeal {
+export function expectedDeal(deck: Card[], seats: { id: string; seat: number }[], dealerSeat: number, holeCount: number, options: { doubleBoard?: boolean } = {}): ExpectedDeal {
   const ordered = [...seats].sort((left, right) => left.seat - right.seat);
   const dealerIndex = ordered.findIndex((entry) => entry.seat === dealerSeat);
   if (dealerIndex < 0) {
@@ -135,12 +142,16 @@ export function expectedDeal(deck: Card[], seats: { id: string; seat: number }[]
   }
   const afterHoles = next;
   const board: Card[] = [];
-  next = dealStreets(deck, next, board, 0);
-  return { holes, board, afterBoard: next, afterHoles };
+  const secondBoard: Card[] = [];
+  next = dealStreets(deck, next, board, 0, options.doubleBoard ? secondBoard : undefined);
+  return { holes, board, secondBoard, afterBoard: next, afterHoles };
 }
 
-/** Dorozdá board z dĺžky `from` do 5 kariet (pred každou ulicou páli kartu); vráti index ďalšej karty. */
-export function dealStreets(deck: Card[], start: number, board: Card[], from: number): number {
+/**
+ * Dorozdá board z dĺžky `from` do 5 kariet (pred každou ulicou páli kartu); vráti index ďalšej karty.
+ * S `second` (Double Board) dostane na každej ulici po kartách vrchného boardu svoje karty aj spodný board.
+ */
+export function dealStreets(deck: Card[], start: number, board: Card[], from: number, second?: Card[]): number {
   let next = start;
   let length = from;
   while (length < 5) {
@@ -148,6 +159,11 @@ export function dealStreets(deck: Card[], start: number, board: Card[], from: nu
     const count = length === 0 ? 3 : 1;
     for (let index = 0; index < count; index++) {
       board.push(deck[next++]);
+    }
+    if (second) {
+      for (let index = 0; index < count; index++) {
+        second.push(deck[next++]);
+      }
     }
     length += count;
   }

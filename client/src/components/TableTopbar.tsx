@@ -3,7 +3,7 @@ import type { SeatPlayerView, TableView } from '../../../shared/types';
 import { VARIANT_LABELS } from '../../../shared/constants';
 import { formatMoney } from '../../../shared/money';
 import { handsLabel } from '../../../shared/plural';
-import { piggySeriesLabel } from './GameModes';
+import { doubleBoardLabel, handCountLabel, piggySeriesLabel } from './GameModes';
 import { SoundButton, SoundMenuItems, useDismiss } from '../sound';
 import { JukeboxButton } from '../jukebox/Jukebox';
 import { HelpDialog } from './HelpDialog';
@@ -81,7 +81,7 @@ export function TableTopbar(props: TableTopbarProps) {
   const handLive = !!view.hand && view.hand.street !== 'complete';
   const sevenDeuceActive = handLive ? view.hand!.rules.sevenDeuce : view.settings.sevenDeuceAlways;
   const sevenDeuceBounty = sevenDeuceActive ? (handLive ? view.hand!.rules.sevenDeuceBounty : view.settings.sevenDeuceBounty) : null;
-  const modeChips: { key: 'variant' | 'next-variant' | 'seven-deuce' | 'piggy'; label: string; title: string }[] = [];
+  const modeChips: { key: 'variant' | 'next-variant' | 'double-board' | 'seven-deuce' | 'piggy'; label: string; title: string }[] = [];
   const liveSpecial = handLive && view.hand!.rules.variant !== view.settings.defaultVariant ? view.hand!.rules.variant : null;
   const queued = view.nextHand?.variant ? { variant: view.nextHand.variant, hands: view.nextHand.hands ?? 1, permanent: !!view.nextHand.permanent } : null;
   if (liveSpecial) {
@@ -95,6 +95,14 @@ export function TableTopbar(props: TableTopbarProps) {
   }
   if (queued && queued.variant !== liveSpecial) {
     modeChips.push({ key: 'next-variant', label: `Ďalej ${VARIANT_LABELS[queued.variant]} · ${queued.permanent ? 'natrvalo' : handsLabel(queued.hands)}`, title: 'Špeciálne kolo od ďalšej ruky' });
+  }
+  // Double Board: zapnutý mód platí od najbližšej rozdanej ruky; vypnutý počas ruky ešte dobehne v tejto ruke.
+  const liveDoubleBoard = handLive && !!view.hand!.rules.doubleBoard;
+  const doubleBoardTitle = 'Dva samostatné boardy — bank sa delí na polovicu medzi víťazov vrchného a spodného boardu, kto vyhrá oba, berie všetko';
+  if (view.doubleBoard && handLive && !liveDoubleBoard) {
+    modeChips.push({ key: 'double-board', label: `Ďalej Double Board · ${view.doubleBoard.permanent ? 'natrvalo' : handCountLabel(view.doubleBoard.remaining)}`, title: doubleBoardTitle });
+  } else if (view.doubleBoard || liveDoubleBoard) {
+    modeChips.push({ key: 'double-board', label: `Double Board · ${doubleBoardLabel(view.doubleBoard, liveDoubleBoard)}`, title: doubleBoardTitle });
   }
   if (sevenDeuceBounty !== null) {
     modeChips.push({ key: 'seven-deuce', label: `7-2 · bonus ${money(sevenDeuceBounty)}`, title: 'Kto vyhrá ruku so 7-2, dostane bonus od každého hráča v ruke' });

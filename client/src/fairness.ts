@@ -93,6 +93,7 @@ function recordHand(data: FairLocal, view: TableStateView): boolean {
       board: [],
       extraBoards: [],
       runoutBase: 0,
+      secondBoard: [],
       shown: {},
       rabbit: [],
     };
@@ -101,6 +102,10 @@ function recordHand(data: FairLocal, view: TableStateView): boolean {
   const before = JSON.stringify(record);
   if (hand.board.length > record.board.length) {
     record.board = [...hand.board];
+  }
+  // Double Board: spodný board sa zapisuje rovnako ako vrchný (staršie záznamy pole nemajú).
+  if (hand.secondBoard && hand.secondBoard.length > (record.secondBoard?.length ?? 0)) {
+    record.secondBoard = [...hand.secondBoard];
   }
   if (hand.extraBoards?.length) {
     record.extraBoards = hand.extraBoards.map((board) => [...board]);

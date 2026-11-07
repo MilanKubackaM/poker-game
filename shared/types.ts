@@ -70,6 +70,8 @@ export interface HandRules {
   sevenDeuceBounty: number;
   smallBlind: number;
   bigBlind: number;
+  /** Double Board: dva samostatné boardy (flop, turn, river 2×), každý pot sa delí na polovicu medzi víťazov boardov. */
+  doubleBoard?: boolean;
 }
 
 export type PlayerStatus = 'active' | 'folded' | 'allin';
@@ -108,7 +110,10 @@ export interface SeatPlayerView {
   cardCount: number;
   hasDiscarded: boolean;
   lastAction: string | null;
+  /** Popis ruky (pri Double Board na vrchnom boarde). */
   handDescription: string | null;
+  /** Double Board: popis ruky na spodnom boarde (pri jednom boarde chýba). */
+  secondHandDescription?: string | null;
 }
 
 export interface LegalActions {
@@ -135,6 +140,8 @@ export interface WinnerView {
   bestCards: Card[];
   /** Pri behu viackrát (all-in) — index behu od 0; pri jednom behu chýba. */
   run?: number;
+  /** Double Board — 0 = vrchný board (`board`), 1 = spodný (`secondBoard`); pri jednom boarde chýba. */
+  board?: 0 | 1;
 }
 
 export interface BountyView {
@@ -156,6 +163,8 @@ export interface HandView {
   rules: HandRules;
   street: Street;
   board: Card[];
+  /** Double Board: spodný board (vrchný je `board`); pri jednom boarde chýba. */
+  secondBoard?: Card[];
   /** All-in na viac behov: boardy 2. a 3. behu (prvý je `board`); spoločné karty sú prvých `runoutBase`. */
   extraBoards?: Card[][];
   runs?: number;
@@ -253,6 +262,8 @@ export interface HandHistoryWinner {
   amount: number;
   handDescription: string | null;
   cards: Card[];
+  /** Double Board — ktorý board vyhral (0 vrchný, 1 spodný); pri jednom boarde chýba. */
+  board?: 0 | 1;
 }
 
 export interface HandHistoryEntry {
@@ -264,6 +275,8 @@ export interface HandHistoryEntry {
   board: Card[];
   /** Boardy ďalších behov pri all-in na viackrát. */
   extraBoards?: Card[][];
+  /** Double Board: spodný board (vrchný je `board`). */
+  secondBoard?: Card[];
   totalPot: number;
   wonWithoutShowdown: boolean;
   winners: HandHistoryWinner[];
@@ -364,7 +377,21 @@ export interface TableSummary {
 }
 
 /** Herné módy, ktoré pred prvou rukou ukážu všetkým pravidlá a čakajú na „Rozumiem“. */
-export type GameMode = 'omaha' | 'pineapple' | 'seven-deuce' | 'piggy';
+export type GameMode = 'omaha' | 'pineapple' | 'seven-deuce' | 'piggy' | 'double-board';
+
+/**
+ * Mód Double Board — kombinuje sa s variantom (Hold'em, Omaha, Pineapple), beží na počet rúk alebo natrvalo.
+ * `remaining` = koľko Double Board rúk sa ešte rozdá PO práve rozohranej ruke (odpočítava sa pri rozdaní ako
+ * `nextHand.hands`; počas poslednej ruky je celý mód už null). Či je rozohraná ruka Double Board, hovorí
+ * `hand.rules.doubleBoard`. Pri `permanent` sa `remaining` ignoruje (0).
+ */
+export interface DoubleBoardView {
+  remaining: number;
+  permanent: boolean;
+}
+
+/** Príkaz hosta `host:doubleBoard`: zapnúť na `hands` rúk (1…MAX_SPECIAL_HANDS, predvolene 1) alebo natrvalo; vypnúť. */
+export type DoubleBoardCommand = { action: 'start'; hands?: number; permanent?: boolean } | { action: 'stop' };
 
 /**
  * Mód „Prasiatko“: pred každou rukou dá každý rozdaný hráč vstup (1 BB) do prasiatka (mimo potu),
@@ -443,6 +470,8 @@ export interface TableView {
   canChangeSeat: boolean;
   settings: TableSettings;
   nextHand: NextHandOverride | null;
+  /** Mód Double Board (null = vypnutý); platí od najbližšej rozdanej ruky. */
+  doubleBoard: DoubleBoardView | null;
   running: boolean;
   paused: boolean;
   players: SeatPlayerView[];

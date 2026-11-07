@@ -68,6 +68,7 @@ export function demoView(overrides: Partial<TableView> = {}): TableView {
     departed: [],
     settings: { ...DEFAULT_SETTINGS, name: 'Piatkový poker' },
     nextHand: null,
+    doubleBoard: null,
     running: true,
     paused: false,
     players: demoPlayers(),
@@ -228,6 +229,8 @@ interface HandSpec {
   sevenDeuce?: boolean;
   dealer: string;
   board: string[];
+  /** Double Board: spodný board. */
+  secondBoard?: string[];
   winners: HandHistoryWinner[];
   noShowdown?: boolean;
   bounty?: [string, number];
@@ -235,7 +238,7 @@ interface HandSpec {
   piggy?: [string, number][];
 }
 
-/** Ručne napísané ruky #15–#26 (najnovšia na konci) — 7-2 bonus, delený pot, Omaha, Pineapple, výhra bez showdownu. */
+/** Ručne napísané ruky #13–#26 (najnovšia na konci) — 7-2 bonus, delený pot, Omaha, Pineapple, výhra bez showdownu, Double Board. */
 const NOTABLE_HANDS: HandSpec[] = [
   { dealer: 'p3', board: ['8c', '5d', 'Js', '3h', 'Ac'], winners: [win('p6', 900, 'Pár — esá', ['As', 'Qd'])] },
   { dealer: 'p5', board: ['Kh', '9c', '4d', '4s', 'Tc'], winners: [win('me', 820, 'Dva páry — králi a štvorky', ['Kd', 'Qh'])] },
@@ -257,10 +260,23 @@ const NOTABLE_HANDS: HandSpec[] = [
     winners: [win('p3', 560, 'Postupka do esa', ['Kc', 'Jh', '3d', '8s']), win('me', 560, 'Postupka do esa', ['Kd', 'Js', '9c', '2h'])],
   },
   { sevenDeuce: true, dealer: 'p2', board: ['7s', '2h', 'Kc', '9d', '3s'], winners: [win('me', 1240, 'Dva páry — sedmičky a dvojky', ['7d', '2c'])], bounty: ['me', 200] },
+  {
+    dealer: 'p4',
+    board: ['Kd', '9d', '4d', 'Qs', '2c'],
+    secondBoard: ['Jh', 'Jc', '7s', '3h', '8c'],
+    winners: [{ ...win('p3', 450, 'Farba — eso navrchu', ['Ad', '5d']), board: 0 }, { ...win('p1', 450, 'Trojica — dolníky', ['Js', 'Ts']), board: 1 }],
+  },
+  {
+    variant: 'omaha',
+    dealer: 'p5',
+    board: ['Ah', 'Kh', '7c', '2h', '9s'],
+    secondBoard: ['Tc', 'Td', '6h', '5s', 'Qc'],
+    winners: [{ ...win('me', 640, 'Farba — eso navrchu', ['Qh', 'Jh', 'Ts', '4c']), board: 0 }, { ...win('me', 640, 'Full house — desiatky a dámy', ['Qh', 'Jh', 'Ts', '4c']), board: 1 }],
+  },
   { dealer: 'p3', board: ['Kd', '9s', '4h', '2c', 'Jd'], winners: [win('p1', 680, 'Pár — králi', ['Ks', 'Qc'])], piggy: [['p1', 640]] },
 ];
 
-/** Staršie, obyčajné ruky #1–#14, aby história mala aj stránkovanie („Zobraziť ďalšie“). */
+/** Staršie, obyčajné ruky #1–#12, aby história mala aj stránkovanie („Zobraziť ďalšie“). */
 function fillerHands(count: number): HandSpec[] {
   const ids = ['me', 'p1', 'p2', 'p3', 'p5', 'p6'];
   const boards = [
@@ -282,7 +298,7 @@ function fillerHands(count: number): HandSpec[] {
 }
 
 export function demoHistory(): HandHistoryEntry[] {
-  const hands = [...fillerHands(14), ...NOTABLE_HANDS];
+  const hands = [...fillerHands(12), ...NOTABLE_HANDS];
   const start = Date.now() - 92 * MINUTE;
   return hands.map((hand, index) => ({
     handNumber: index + 1,
@@ -291,6 +307,7 @@ export function demoHistory(): HandHistoryEntry[] {
     sevenDeuce: !!hand.sevenDeuce,
     dealerName: NAMES[hand.dealer],
     board: hand.board as Card[],
+    ...(hand.secondBoard ? { secondBoard: hand.secondBoard as Card[] } : {}),
     totalPot: hand.winners.reduce((sum, winner) => sum + winner.amount, 0),
     wonWithoutShowdown: !!hand.noShowdown,
     winners: hand.winners,

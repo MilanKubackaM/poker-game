@@ -28,6 +28,8 @@ export interface DealtHand {
   dealerSeat: number;
   seats: { id: string; seat: number }[];
   holeCount: number;
+  /** Double Board — dôkaz to musí niesť, inak by overenie rozdávalo boardy po starom. */
+  doubleBoard?: boolean;
 }
 
 /**
@@ -132,6 +134,7 @@ export class FairDealer {
       dealerSeat: hand.dealerSeat,
       seats: hand.seats.map(({ id, seat }) => ({ id, seat })),
       holeCount: hand.holeCount,
+      ...(hand.doubleBoard ? { doubleBoard: true as const } : {}),
     };
     this.proofs.push(proof);
     if (this.proofs.length > MAX_HISTORY_HANDS) {

@@ -1121,6 +1121,23 @@ io.on('connection', (rawSocket) => {
     // Počet hier (celé číslo 1…MAX_PIGGY_GAMES) overí stôl; pri `permanent` sa ignoruje.
     reply(ack, table.hostPiggy({ action: 'start', games: (payload.games ?? 1) as number, permanent }));
   });
+  withHost<{ action?: unknown; hands?: unknown; permanent?: unknown }>('host:doubleBoard', (payload, table, _player, ack) => {
+    if (payload.action === 'stop') {
+      reply(ack, table.hostDoubleBoard({ action: 'stop' }));
+      return;
+    }
+    if (payload.action !== 'start') {
+      reply(ack, { ok: false, error: 'Neplatná voľba' });
+      return;
+    }
+    const permanent = payload.permanent ?? false;
+    if (typeof permanent !== 'boolean') {
+      reply(ack, { ok: false, error: 'Neplatná voľba' });
+      return;
+    }
+    // Počet rúk (celé číslo 1…MAX_SPECIAL_HANDS) overí stôl; pri `permanent` sa ignoruje.
+    reply(ack, table.hostDoubleBoard({ action: 'start', hands: (payload.hands ?? 1) as number, permanent }));
+  });
 
   withPlayer('mode:ack', (_payload, table, player, ack) => reply(ack, table.modeAck(player)));
   withPlayer('hand:show', (_payload, table, player, ack) => reply(ack, table.showCards(player)));

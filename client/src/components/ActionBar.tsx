@@ -196,7 +196,24 @@ export function ActionBar({
           </div>
         )}
         <div className="my-hand-info">
-          {me?.handDescription && me.status !== 'folded' && <div className="my-hand-desc">{me.handDescription}</div>}
+          {me?.handDescription && me.status !== 'folded' && (
+            <div className="my-hand-desc">
+              {me.secondHandDescription !== undefined && (
+                <span className="hand-desc-board top" aria-label="Vrchný board:">
+                  1
+                </span>
+              )}
+              {me.handDescription}
+            </div>
+          )}
+          {me?.secondHandDescription && me.status !== 'folded' && (
+            <div className="my-hand-desc">
+              <span className="hand-desc-board bottom" aria-label="Spodný board:">
+                2
+              </span>
+              {me.secondHandDescription}
+            </div>
+          )}
           {statusText && <div className="my-status">{statusText}</div>}
           {turnClock ? (
             <div className={turnClock.phase === 'bank' ? 'turn-clock timebank' : 'turn-clock'} role="timer" aria-live="off">

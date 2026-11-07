@@ -35,6 +35,16 @@
   every browser that sat at them. They show the leaderboard, hand history, transactions, cash-out and your own hands.
 - „Claim" adds such a table to your account. It then counts in your statistics and is visible on all your devices.
 
+**Double Board**
+- New game mode: two separate boards (two flops, turns and rivers). Every pot, side pots included, is split in half:
+  one half goes to the best hand on the top board, the other to the best hand on the bottom board. If you are best on
+  both boards, you take the whole pot (scoop). The odd chip goes to the top board.
+- It combines with Hold'em, Omaha and Pineapple. In Pineapple you discard after preflop as usual, then both boards are
+  dealt.
+- The host turns it on for a number of hands or permanently, or turns it off, in Host → Game. Before the first such hand
+  everyone sees the rules.
+- Double Board hands have no run-it-twice vote and no board reveal. Both boards are covered by the shuffle proofs.
+
 **Jukebox**
 - The jukebox now plays at most at half the previous volume, so 100 % on the slider is 50 % of the player. Voices
   at the table are easier to hear.
@@ -76,6 +86,16 @@
   prehliadači, z ktorého si pri nich sedel. Je v nich leaderboard, história rúk, transakcie, vyúčtovanie aj tvoje ruky.
 - „Prevziať do účtu" pridá taký stôl k tvojmu účtu. Potom sa započíta do štatistík a uvidíš ho na všetkých
   zariadeniach.
+
+**Double Board**
+- Nový herný mód: dva samostatné boardy (dva flopy, turny aj rivre). Každý pot, aj vedľajší, sa delí na polovicu:
+  jedna patrí najlepšej ruke na vrchnom boarde, druhá najlepšej ruke na spodnom. Kto má najlepšiu ruku na oboch,
+  berie celý pot (scoop). Nepárny žetón ide vrchnému boardu.
+- Kombinuje sa s Hold'em, Omahou aj Pineapple. V Pineapple zahodíš kartu po preflope ako vždy, potom sa vyložia oba
+  boardy.
+- Host ho zapne na počet rúk alebo natrvalo, prípadne ho vypne, v Host → Hra. Pred prvou takou rukou sa všetkým ukážu
+  pravidlá.
+- V Double Board rukách sa nehlasuje o viacerých behoch ani sa neodkrýva board. Oba boardy sú v dôkazoch miešania.
 
 **Jukebox**
 - Jukebox hrá najviac na polovicu doterajšej hlasitosti, takže 100 % na posuvníku je 50 % prehrávača. Hlasy pri

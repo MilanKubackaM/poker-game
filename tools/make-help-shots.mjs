@@ -44,6 +44,8 @@ const SHOTS = [
   ['draw-pick', 'draw-pick'],
   ['table-roles', 'table-roles', '.table-area-wrap'],
   ['speaking', 'speaking', '.table-area-wrap'],
+  ['double-board', 'double-board'],
+  ['host-double-board', 'host-double-board'],
 ];
 
 const work = mkdtempSync(path.join(tmpdir(), 'help-shots-'));

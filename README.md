@@ -76,6 +76,8 @@ matches [`HandEngine.start`](server/poker/HandEngine.ts) and `dealNextStreet`):
 1. Hole cards go one at a time, round-robin, starting from the first occupied seat to the left of the dealer button (seat
    numbers ascending, wrapping around). Hold'em deals 2 rounds, Omaha 4, Pineapple 3.
 2. Board: burn 1, flop 3, burn 1, turn 1, burn 1, river 1.
+   In a Double Board hand each street is: burn 1, then the top board's cards, then the bottom board's cards (flop 3 + 3,
+   turn 1 + 1, river 1 + 1). Run it twice and the rabbit hunt are off in Double Board hands.
 3. Extra runs (run it twice or three times) continue from the same deck in the same way, run after run. A paid "rabbit
    hunt" reveals the cards the main board would have received.
 

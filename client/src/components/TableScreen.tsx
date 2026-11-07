@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { Card, PlayerAction, ReturnMode, RunVoteView, SeatPlayerView, TableEvent, TableView } from '../../../shared/types';
+import type { Card, PlayerAction, ReturnMode, RunVoteView, SeatPlayerView, TableEvent, TableView, WinnerView } from '../../../shared/types';
 import { MAX_SEATS, VARIANT_LABELS } from '../../../shared/constants';
 import { formatMoney } from '../../../shared/money';
 import type { ChatToastItem } from '../hooks/useChatToasts';
@@ -223,7 +223,10 @@ export function TableScreen(props: TableScreenProps) {
   const now = useNow(ticking) + clockOffset;
   const handComplete = hand?.street === 'complete';
   const rabbitShown = !!rabbit && now < rabbit.until;
-  const canRabbit = handComplete && !!hand && hand.board.length < 5 && !rabbit && !!me && !me.sittingOut && me.stack >= view.settings.bigBlind;
+  /** Double Board: ruka má dva samostatné boardy (vrchný `board`, spodný `secondBoard`). */
+  const doubleBoard = !!hand && (!!hand.rules.doubleBoard || !!hand.secondBoard);
+  // Odkrytie zvyšku boardu (rabbit) pozná len jeden board — v Double Board ruke sa neponúka.
+  const canRabbit = handComplete && !!hand && !doubleBoard && hand.board.length < 5 && !rabbit && !!me && !me.sittingOut && me.stack >= view.settings.bigBlind;
   const showdown = handComplete || hand?.street === 'showdown';
   /** All-in dorozdávanie: nikto nie je na ťahu a karty súperov sú odkryté — ukážu sa aj ich kombinácie. */
   const runout = !!hand && !showdown && hand.street !== 'discard' && !hand.toActId && view.players.some((player) => player.id !== view.youId && player.cards.some(Boolean));
@@ -273,12 +276,25 @@ export function TableScreen(props: TableScreenProps) {
     return amounts;
   }, [result]);
 
+  /** Víťazné karty hráča — pri viacerých výhrach (Double Board scoop, viac behov, side poty) zjednotené. */
   const bestCards = useMemo(() => {
     const cards = new Map<string, Card[]>();
     for (const winner of result?.winners ?? []) {
-      cards.set(winner.playerId, winner.bestCards);
+      const previous = cards.get(winner.playerId) ?? [];
+      cards.set(winner.playerId, [...previous, ...winner.bestCards.filter((card) => !previous.includes(card))]);
     }
     return cards;
+  }, [result]);
+
+  /** Zvýraznené karty na boardoch: index 0 = vrchný (a jediný) board, 1 = spodný board pri Double Board. */
+  const boardHighlights = useMemo(() => {
+    const highlights: [Set<Card>, Set<Card>] = [new Set(), new Set()];
+    for (const winner of result?.winners ?? []) {
+      for (const card of winner.bestCards) {
+        highlights[winner.board ?? 0].add(card);
+      }
+    }
+    return highlights;
   }, [result]);
 
   const mySeat = me?.seat ?? 0;
@@ -393,6 +409,10 @@ export function TableScreen(props: TableScreenProps) {
     }
   }
   const bountyWinner = result?.bounty ? view.players.find((player) => player.id === result.bounty!.winnerId) : null;
+  const boardResults = doubleBoard ? doubleBoardResults(result?.winners ?? [], view.players) : null;
+  /** Scoop = jeden hráč vyhral oba boardy (celý bank). */
+  const scoopName = boardResults && boardResults[0].names.length === 1 && boardResults[1].names.length === 1 && boardResults[0].ids[0] === boardResults[1].ids[0] ? boardResults[0].names[0] : null;
+  const boardSplit = !!boardResults && boardResults[0].names.length > 0 && boardResults[1].names.length > 0;
 
   return (
     <div className="table-screen">
@@ -449,15 +469,20 @@ export function TableScreen(props: TableScreenProps) {
         <main className="table-area-wrap">
           <div className={portrait ? 'table-area portrait' : 'table-area'}>
             <div className="felt">
-              <div className={draw && (draw.stage === 'drawing' || draw.stage === 'done') ? 'felt-inner felt-drawing' : 'felt-inner'}>
+              <div className={draw && (draw.stage === 'drawing' || draw.stage === 'done') ? 'felt-inner felt-drawing' : doubleBoard && !draw ? 'felt-inner felt-double' : 'felt-inner'}>
                 {draw && (draw.stage === 'drawing' || draw.stage === 'done') && <DrawField draw={draw} players={view.players} canPick={canPick} onPick={handlers.onDrawPick} />}
                 {draw && <DrawBanner draw={draw} players={view.players} />}
                 <div className="felt-logo">POKER NIGHT</div>
                 {feltStatus && <div className="felt-status">{feltStatus}</div>}
-                <div className={draw ? 'board board-hidden' : 'board'}>
+                <div className={draw ? 'board board-hidden' : doubleBoard ? 'board board-double board-top' : 'board'} aria-label={doubleBoard ? 'Vrchný board' : undefined}>
+                  {doubleBoard && (
+                    <span className="board-double-label" title="Vrchný board" aria-hidden>
+                      1
+                    </span>
+                  )}
                   {Array.from({ length: 5 }, (_, index) => {
                     const card = hand?.board[index];
-                    const highlighted = !!card && [...bestCards.values()].some((cards) => cards.includes(card));
+                    const highlighted = !!card && boardHighlights[0].has(card);
                     const rabbitCard = !card && rabbitShown && hand ? rabbit!.cards[index - hand.board.length] : undefined;
                     if (card) {
                       return <PlayingCard key={index} card={card} size="md" highlight={highlighted} />;
@@ -471,6 +496,17 @@ export function TableScreen(props: TableScreenProps) {
                     );
                   })}
                 </div>
+                {doubleBoard && (
+                  <div className="board board-double board-bottom" aria-label="Spodný board">
+                    <span className="board-double-label" title="Spodný board" aria-hidden>
+                      2
+                    </span>
+                    {Array.from({ length: 5 }, (_, index) => {
+                      const card = hand?.secondBoard?.[index];
+                      return card ? <PlayingCard key={index} card={card} size="md" highlight={boardHighlights[1].has(card)} /> : <div key={index} className="card-slot" />;
+                    })}
+                  </div>
+                )}
                 {hand?.extraBoards?.map((board, run) => (
                   <div key={run} className="board board-run" aria-label={`${run + 2}. beh`}>
                     <span className="board-run-label">{run + 2}.</span>
@@ -479,7 +515,7 @@ export function TableScreen(props: TableScreenProps) {
                       if (index < (hand.runoutBase ?? 0)) {
                         return <div key={index} className="card-slot card-slot-shared" />;
                       }
-                      const highlighted = !!card && [...bestCards.values()].some((cards) => cards.includes(card));
+                      const highlighted = !!card && boardHighlights[0].has(card);
                       return card ? <PlayingCard key={index} card={card} size="md" highlight={highlighted} /> : <div key={index} className="card-slot" />;
                     })}
                   </div>
@@ -499,7 +535,25 @@ export function TableScreen(props: TableScreenProps) {
                 )}
                 {hand?.street === 'discard' && discardSeconds !== null && <div className="pot">Zahadzovanie… {discardSeconds} s</div>}
                 {piggy && !draw && <PiggyBank piggy={piggy} currency={currency} participants={piggyParticipants} />}
-                {result && (
+                {result && boardResults && boardSplit && (
+                  <div className={scoopName ? 'result-banner result-scoop' : 'result-banner'}>
+                    <div className="result-title">{scoopName ? <>Scoop! {scoopName} berie celý bank</> : 'Bank sa delí medzi boardy'}</div>
+                    <ul className="result-boards">
+                      {boardResults.map((board, index) => (
+                        <li key={index} className={index === 0 ? 'result-board top' : 'result-board bottom'}>
+                          <span className="result-board-label">{index === 0 ? 'Vrchný' : 'Spodný'}:</span> <strong>{board.names.join(' & ')}</strong>{board.names.length > 1 && ' delia'} <span className="result-board-amount">+{money(board.amount)}</span>
+                          {board.handDescription && <span className="result-board-hand"> · {board.handDescription}</span>}
+                        </li>
+                      ))}
+                    </ul>
+                    {bountyWinner && (
+                      <div className="result-bounty">
+                        7-2! {bountyWinner.name} inkasuje bonus {money(result.bounty!.total)}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {result && !(boardResults && boardSplit) && (
                   <div className="result-banner">
                     <div className="result-title">
                       {uniqueWinnerNames.join(' & ')} {uniqueWinnerNames.length > 1 ? 'delia pot' : 'vyhráva'}
@@ -633,6 +687,7 @@ export function TableScreen(props: TableScreenProps) {
           settings={view.settings}
           piggy={piggy}
           nextHand={view.nextHand}
+          doubleBoard={view.doubleBoard}
           players={view.players}
           youId={view.youId}
           secondsLeft={Math.max(0, Math.ceil((modeIntro.deadline - now) / 1000))}
@@ -673,6 +728,35 @@ export function cashoutProps(view: TableView, bank: BankActions | undefined): St
 }
 
 /** Po all-in: hráči v ruke volia 1×/2×/3×; ostatní vidia priebeh. Platí najmenšia voľba. */
+/** Výsledok jedného boardu pri Double Board: víťazi (pri remíze viacerí), spolu vyhraté a popis kombinácie. */
+interface BoardResult {
+  ids: string[];
+  names: string[];
+  amount: number;
+  handDescription: string | null;
+}
+
+/** Rozdelí víťazov ruky podľa boardu (`winner.board`); víťazi bez boardu (ruka bez showdownu) sa nerátajú. */
+export function doubleBoardResults(winners: WinnerView[], players: SeatPlayerView[]): [BoardResult, BoardResult] {
+  const boards: [BoardResult, BoardResult] = [
+    { ids: [], names: [], amount: 0, handDescription: null },
+    { ids: [], names: [], amount: 0, handDescription: null },
+  ];
+  for (const winner of winners) {
+    if (winner.board === undefined) {
+      continue;
+    }
+    const board = boards[winner.board];
+    board.amount += winner.amount;
+    board.handDescription ??= winner.handDescription;
+    if (!board.ids.includes(winner.playerId)) {
+      board.ids.push(winner.playerId);
+      board.names.push(players.find((player) => player.id === winner.playerId)?.name ?? '?');
+    }
+  }
+  return boards;
+}
+
 function RunVotePanel({ vote, players, youId, secondsLeft, onChoose }: { vote: RunVoteView; players: SeatPlayerView[]; youId: string; secondsLeft: number; onChoose: (runs: number) => void }) {
   const participant = vote.participants.includes(youId);
   const mine = vote.choices[youId];

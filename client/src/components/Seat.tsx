@@ -176,7 +176,8 @@ export function Seat(props: SeatProps) {
         ) : player.lastAction ? (
           <span className="badge">{player.lastAction}</span>
         ) : null}
-        {showdown && player.handDescription && !isMe && <HandDescription text={player.handDescription} />}
+        {showdown && player.handDescription && !isMe && <HandDescription text={player.handDescription} board={player.secondHandDescription !== undefined ? 1 : undefined} />}
+        {showdown && player.secondHandDescription && !isMe && <HandDescription text={player.secondHandDescription} board={2} />}
       </div>
       {player.bet > 0 && (
         <div className="seat-bet" style={{ '--bx': `${position.betX}px`, '--by': `${position.betY}px` } as CSSProperties}>
@@ -188,13 +189,25 @@ export function Seat(props: SeatProps) {
   );
 }
 
-function HandDescription({ text }: { text: string }) {
+/** Popis kombinácie pri hráčovi; `board` = číslo boardu pri Double Board (1 vrchný, 2 spodný). */
+function HandDescription({ text, board }: { text: string; board?: 1 | 2 }) {
   const separator = text.indexOf(' — ');
+  const marker = board && (
+    <span className={board === 1 ? 'hand-desc-board top' : 'hand-desc-board bottom'} aria-label={board === 1 ? 'Vrchný board:' : 'Spodný board:'}>
+      {board}
+    </span>
+  );
   if (separator < 0) {
-    return <span className="hand-desc">{text}</span>;
+    return (
+      <span className="hand-desc">
+        {marker}
+        {text}
+      </span>
+    );
   }
   return (
     <span className="hand-desc" title={text}>
+      {marker}
       {text.slice(0, separator)}
       <span className="hand-desc-detail">{text.slice(separator)}</span>
     </span>

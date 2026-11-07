@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import type { Currency, GameMode, ModeIntroView, NextHandOverride, PiggyView, SeatPlayerView, TableSettings } from '../../../shared/types';
-import { DISCARD_TIMEOUT_SEC } from '../../../shared/constants';
+import type { Currency, DoubleBoardView, GameMode, ModeIntroView, NextHandOverride, PiggyView, SeatPlayerView, TableSettings } from '../../../shared/types';
+import { DISCARD_TIMEOUT_SEC, VARIANT_LABELS } from '../../../shared/constants';
 import { formatMoney } from '../../../shared/money';
 import { handsLabel } from '../../../shared/plural';
 import { getSoundPreferences, playSound } from '../sound';
@@ -23,6 +23,28 @@ export function inPiggy(piggy: PiggyView, playerId: string): boolean {
 /** „1 hra“, „3 hry“, „5 hier“ */
 export function gamesLabel(count: number): string {
   return `${count} ${count === 1 ? 'hra' : count >= 2 && count <= 4 ? 'hry' : 'hier'}`;
+}
+
+/** „1 ruka“, „3 ruky“, „5 rúk“ */
+export function handCountLabel(count: number): string {
+  return `${count} ${count === 1 ? 'ruka' : count >= 2 && count <= 4 ? 'ruky' : 'rúk'}`;
+}
+
+/**
+ * Koľko rúk Double Board ešte zostáva vrátane práve rozohranej. Server pri rozdaní ruky `remaining` hneď zníži
+ * (ako `nextHand.hands` pri špeciálnom kole), takže počas Double Board ruky treba pripočítať aj ju.
+ */
+export function doubleBoardHandsLeft(doubleBoard: DoubleBoardView | null, liveDoubleHand: boolean): number {
+  return (doubleBoard && !doubleBoard.permanent ? doubleBoard.remaining : 0) + (liveDoubleHand ? 1 : 0);
+}
+
+/** Stav Double Board pre lištu, panel hosta a vysvetlivky: „natrvalo“, „posledná ruka“, „ešte 3 ruky“. */
+export function doubleBoardLabel(doubleBoard: DoubleBoardView | null, liveDoubleHand: boolean): string {
+  if (doubleBoard?.permanent) {
+    return 'natrvalo';
+  }
+  const left = doubleBoardHandsLeft(doubleBoard, liveDoubleHand);
+  return left <= 1 ? 'posledná ruka' : `ešte ${handCountLabel(left)}`;
 }
 
 /** Dĺžka naplánovaného špeciálneho kola: „natrvalo“ alebo „3 kolá“. */
@@ -285,17 +307,36 @@ export function PiggyWonDialog({ piggy, currency, youId, onClose }: PiggyWonDial
   );
 }
 
+/* ---------- Double Board: grafika ---------- */
+
+/** Ikona Double Board — dva rady kariet nad sebou; veľkosť podľa `font-size` okolia. */
+export function DoubleBoardIcon({ className = 'double-board-icon' }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" aria-hidden focusable="false">
+      {[2, 9.5, 17].map((x) => (
+        <g key={x}>
+          <rect x={x} y="3" width="5.5" height="7.5" rx="1.2" fill="#f7f1e3" stroke="#e8c26e" strokeWidth="0.9" />
+          <rect x={x} y="13.5" width="5.5" height="7.5" rx="1.2" fill="#f7f1e3" stroke="#7fe3b0" strokeWidth="0.9" />
+        </g>
+      ))}
+    </svg>
+  );
+}
+
 /* ---------- Dialóg s pravidlami módu ---------- */
 
 export interface ModeInfo {
-  icon: string;
+  icon: ReactNode;
   title: string;
   lead: string;
   rules: ReactNode[];
 }
 
-/** `nextHand` = naplánované špeciálne kolo (pri intre Omahy / Pineapple povie, či beží natrvalo). */
-export function modeInfo(mode: GameMode, settings: TableSettings, piggy: PiggyView | null, nextHand?: NextHandOverride | null): ModeInfo {
+/**
+ * `nextHand` = naplánované špeciálne kolo (pri intre Omahy / Pineapple povie, či beží natrvalo),
+ * `doubleBoard` = stav módu Double Board (pri jeho intre povie, na koľko rúk beží).
+ */
+export function modeInfo(mode: GameMode, settings: TableSettings, piggy: PiggyView | null, nextHand?: NextHandOverride | null, doubleBoard?: DoubleBoardView | null): ModeInfo {
   const money = (cents: number) => formatMoney(cents, settings.currency);
   const permanentVariant = !!nextHand?.permanent && nextHand.variant === mode;
   switch (mode) {
@@ -354,6 +395,38 @@ export function modeInfo(mode: GameMode, settings: TableSettings, piggy: PiggyVi
           <>V kolách Omahy sa nepočíta.</>,
         ],
       };
+    case 'double-board': {
+      // Variant, s ktorým sa Double Board kombinuje: naplánované špeciálne kolo, inak predvolený variant stola.
+      const variant = nextHand?.variant ?? settings.defaultVariant;
+      return {
+        icon: <DoubleBoardIcon />,
+        title: 'Double Board',
+        lead: doubleBoard?.permanent
+          ? `Host zapol Double Board natrvalo — hrá sa ${VARIANT_LABELS[variant]} s dvoma boardmi, kým ho nevypne.`
+          : doubleBoard && doubleBoard.remaining > 1
+            ? `Host zapol Double Board na ${handCountLabel(doubleBoard.remaining)} — hrá sa ${VARIANT_LABELS[variant]} s dvoma boardmi.`
+            : `Ďalšia ruka sa hrá ako ${VARIANT_LABELS[variant]} s dvoma boardmi.`,
+        rules: [
+          <>
+            Hrá sa ako Hold'em alebo Omaha, no rozdávajúci vyloží na stôl <strong>dva úplne samostatné boardy</strong> — dva flopy, dva turny, dva rivre.
+          </>,
+          <>
+            Bank sa v showdowne <strong>delí na polovicu</strong> — jedna patrí víťazovi <strong>vrchného</strong> boardu, druhá víťazovi <strong>spodného</strong>.
+          </>,
+          <>
+            Ak má niekto najlepšiu ruku na oboch boardoch, berie <strong>celý bank</strong> (tzv. <strong>scoop</strong>).
+          </>,
+          <>Stávky idú ako zvyčajne — po každej ulici sa karty pridajú na oba boardy naraz.</>,
+          ...(variant === 'pineapple'
+            ? [
+                <>
+                  Pineapple: kartu zahodíš <strong>po preflope ako vždy</strong>, potom sa vyložia oba boardy — na oba hráš s rovnakými 2 kartami.
+                </>,
+              ]
+            : []),
+        ],
+      };
+    }
     case 'piggy': {
       const entry = piggy?.entry ?? settings.bigBlind;
       const target = piggy?.target ?? 3;
@@ -396,19 +469,21 @@ interface ModeIntroModalProps {
   piggy: PiggyView | null;
   /** Naplánované špeciálne kolo — pri Omahe / Pineapple natrvalo sa to povie v úvode. */
   nextHand?: NextHandOverride | null;
+  /** Stav Double Board — v úvode povie, na koľko rúk beží. */
+  doubleBoard?: DoubleBoardView | null;
   players: SeatPlayerView[];
   youId: string;
   secondsLeft: number;
   onAck: () => void;
 }
 
-export function ModeIntroModal({ intro, settings, piggy, nextHand, players, youId, secondsLeft, onAck }: ModeIntroModalProps) {
+export function ModeIntroModal({ intro, settings, piggy, nextHand, doubleBoard, players, youId, secondsLeft, onAck }: ModeIntroModalProps) {
   const [sent, setSent] = useState(false);
   const [closed, setClosed] = useState(false);
   const participant = intro.participants.includes(youId);
   const acknowledged = intro.acknowledged.includes(youId);
   const waiting = intro.participants.filter((id) => !intro.acknowledged.includes(id));
-  const info = modeInfo(intro.mode, settings, piggy, nextHand);
+  const info = modeInfo(intro.mode, settings, piggy, nextHand, doubleBoard);
   if (closed) {
     return null;
   }

@@ -157,6 +157,11 @@ export function HandHistory({ history, currency }: { history: HandHistoryEntry[]
               </time>
               <span className={entry.variant === 'holdem' ? 'variant-badge' : 'variant-badge special'}>{VARIANT_SHORT[entry.variant]}</span>
               {entry.sevenDeuce && <span className="variant-badge seven">7-2</span>}
+              {entry.secondBoard && (
+                <span className="variant-badge double" title="Double Board — dva boardy">
+                  2× board
+                </span>
+              )}
               <span className="history-pot">Pot {money(entry.totalPot)}</span>
             </div>
             <div className="history-meta">
@@ -164,8 +169,17 @@ export function HandHistory({ history, currency }: { history: HandHistoryEntry[]
               {entry.wonWithoutShowdown && <span>bez showdownu</span>}
             </div>
             {entry.board.length > 0 && (
-              <div className="history-board" aria-label="Karty na stole">
+              <div className="history-board" aria-label={entry.secondBoard ? 'Vrchný board' : 'Karty na stole'}>
+                {entry.secondBoard && <span className="history-board-label top">Vrchný</span>}
                 {entry.board.map((card) => (
+                  <PlayingCard key={card} card={card} size="sm" />
+                ))}
+              </div>
+            )}
+            {entry.secondBoard && entry.secondBoard.length > 0 && (
+              <div className="history-board" aria-label="Spodný board">
+                <span className="history-board-label bottom">Spodný</span>
+                {entry.secondBoard.map((card) => (
                   <PlayingCard key={card} card={card} size="sm" />
                 ))}
               </div>
@@ -180,12 +194,13 @@ export function HandHistory({ history, currency }: { history: HandHistoryEntry[]
             ))}
             <MyHandRow record={myHands.get(entry.handNumber)} currency={currency} />
             <ul className="history-winners">
-              {entry.winners.map((winner) => (
-                <li key={winner.playerId} className="history-winner">
+              {entry.winners.map((winner, index) => (
+                <li key={`${winner.playerId}-${winner.board ?? ''}-${index}`} className="history-winner">
                   <span className="history-winner-line">
                     <span className="history-trophy" aria-hidden>
                       🏆
                     </span>
+                    {winner.board !== undefined && <span className={winner.board === 0 ? 'history-board-label top' : 'history-board-label bottom'}>{winner.board === 0 ? 'Vrchný' : 'Spodný'}</span>}
                     <strong className="history-winner-name">{winner.playerName}</strong>
                     <span className="ledger-pos history-winner-amount">+{money(winner.amount)}</span>
                   </span>
@@ -205,6 +220,7 @@ export function HandHistory({ history, currency }: { history: HandHistoryEntry[]
               ))}
               {entry.winners.length === 0 && <li className="muted">Ruka bola zrušená</li>}
             </ul>
+            {scoopWinner(entry) && <div className="history-scoop-line">Scoop — {scoopWinner(entry)} berie celý bank</div>}
             {entry.bounty && (
               <div className="history-bounty-line">
                 7-2! {entry.bounty.winnerName} inkasuje bonus {money(entry.bounty.total)}
@@ -225,6 +241,20 @@ export function HandHistory({ history, currency }: { history: HandHistoryEntry[]
       )}
     </div>
   );
+}
+
+/** Double Board: meno hráča, ktorý vyhral oba boardy sám (scoop); inak null. */
+function scoopWinner(entry: HandHistoryEntry): string | null {
+  if (!entry.secondBoard) {
+    return null;
+  }
+  const top = new Set(entry.winners.filter((winner) => winner.board === 0).map((winner) => winner.playerId));
+  const bottom = new Set(entry.winners.filter((winner) => winner.board === 1).map((winner) => winner.playerId));
+  if (top.size !== 1 || bottom.size !== 1) {
+    return null;
+  }
+  const [id] = top;
+  return bottom.has(id) ? (entry.winners.find((winner) => winner.playerId === id)?.playerName ?? null) : null;
 }
 
 /** Moje karty a môj výsledok v ruke (len z `history:mine` — cudzie skryté karty sa sem nikdy nedostanú). */

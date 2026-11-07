@@ -157,7 +157,7 @@ function verifyProof(table: string, me: string, proof: FairProof, round: FairExp
   const deck = deriveDeck({ table: proof.table, roundId: proof.roundId, serverSeed: proof.serverSeed, seeds: proof.seeds });
   let expected;
   try {
-    expected = expectedDeal(deck, proof.seats, proof.dealerSeat, proof.holeCount);
+    expected = expectedDeal(deck, proof.seats, proof.dealerSeat, proof.holeCount, { doubleBoard: proof.doubleBoard === true });
   } catch (error) {
     problems.push(`Dealing order cannot be reconstructed: ${(error as Error).message}.`);
     return report('failed');
@@ -178,6 +178,12 @@ function verifyProof(table: string, me: string, proof: FairProof, round: FairExp
   if (!sameList(hand.board, expected.board.slice(0, hand.board.length))) {
     problems.push(`Board ${hand.board.join(' ')} differs from the deck (${expected.board.slice(0, hand.board.length).join(' ')}).`);
   }
+  const secondBoard = hand.secondBoard ?? [];
+  if (secondBoard.length && !proof.doubleBoard) {
+    problems.push('You saw a second (Double Board) board, but the proof says the hand was dealt with a single board.');
+  } else if (!sameList(secondBoard, expected.secondBoard.slice(0, secondBoard.length))) {
+    problems.push(`Bottom board ${secondBoard.join(' ')} differs from the deck (${expected.secondBoard.slice(0, secondBoard.length).join(' ')}).`);
+  }
   let next = expected.afterBoard;
   hand.extraBoards.forEach((board, index) => {
     const run = expected.board.slice(0, hand.runoutBase);
@@ -192,11 +198,17 @@ function verifyProof(table: string, me: string, proof: FairProof, round: FairExp
       problems.push(`Cards shown by ${playerId} (${cards.join(' ')}) are not the cards the deck dealt to that seat.`);
     }
   }
-  if (hand.rabbit.length) {
+  // V Double Board sa board neodkrýva (rabbit hunt je vypnutý), záznam s odkrytím je preto chyba.
+  if (hand.rabbit.length && proof.doubleBoard) {
+    problems.push('Rabbit-hunt cards recorded in a Double Board hand, where the board cannot be revealed.');
+  } else if (hand.rabbit.length) {
     const rabbit = expected.board.slice(hand.board.length, hand.board.length + hand.rabbit.length);
     if (!sameList(hand.rabbit, rabbit)) {
       problems.push(`Rabbit-hunt cards ${hand.rabbit.join(' ')} differ from the deck (${rabbit.join(' ')}).`);
     }
+  }
+  if (proof.doubleBoard) {
+    notes.push('Double Board hand: both boards checked (burn, top board, bottom board on every street).');
   }
   if (!proof.commitments[me] && proof.seats.some((entry) => entry.id === me)) {
     notes.push('Your browser did not contribute a seed to this hand (it had not committed yet).');

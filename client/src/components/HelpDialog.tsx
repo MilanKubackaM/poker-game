@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import type { Card, SeatPlayerView, TableView } from '../../../shared/types';
 import { DISCARD_TIMEOUT_SEC, JUKEBOX_MAX_DURATION_SEC, JUKEBOX_MAX_QUEUE, MAX_PIGGY_GAMES, MAX_SPECIAL_HANDS, MODE_INTRO_TIMEOUT_SEC, PIGGY_TARGET_WINS, RABBIT_SHOW_MS, RUN_VOTE_SEC, TIME_BANK_MAX_SEC, VARIANT_LABELS } from '../../../shared/constants';
 import { formatMoney } from '../../../shared/money';
-import { modeInfo, piggySeriesLabel, PiggyDots, specialRoundLabel, type ModeInfo } from './GameModes';
+import { doubleBoardLabel, modeInfo, piggySeriesLabel, PiggyDots, specialRoundLabel, type ModeInfo } from './GameModes';
 import { RoleBadge, playerRoles, type PlayerRoles } from './HostPlayers';
 import { MicIcon } from './MicIcon';
 import { PlayingCard } from './PlayingCard';
@@ -328,7 +328,7 @@ function chapters(zoom: (src: string, alt: string) => void): Chapter[] {
               <>
                 V lište svieti <strong>„Ďalšia ruka: Omaha“</strong> a počas kola <strong>„Omaha · ešte 2 kolá“</strong> alebo <strong>„Omaha · natrvalo“</strong>. Potom sa hra vráti k bežnému variantu.
               </>,
-              <>Špeciálne kolo sa dá kombinovať s Prasiatkom aj s pravidlom 7-2.</>,
+              <>Špeciálne kolo sa dá kombinovať s Double Board, Prasiatkom aj s pravidlom 7-2.</>,
               <>
                 Pred prvou rukou nového módu sa všetkým ukážu jeho pravidlá. Ruka sa rozdá, keď všetci kliknú <strong>Rozumiem</strong> (najneskôr po {MODE_INTRO_TIMEOUT_SEC} s).
               </>,
@@ -344,6 +344,53 @@ function chapters(zoom: (src: string, alt: string) => void): Chapter[] {
             Naplánované: <strong>{VARIANT_LABELS[view.nextHand.variant]}</strong> od ďalšej ruky · {specialRoundLabel(view.nextHand)}
           </>
         ) : null,
+    },
+    {
+      id: 'double-board',
+      group: 'Herné módy',
+      icon: '2×',
+      title: 'Double Board',
+      body: ({ view }) => (
+        <>
+          <ModeRules info={modeInfo('double-board', view.settings, view.piggy ?? null, null, view.doubleBoard)} />
+          <Points
+            items={[
+              <>
+                Host ho zapína v <strong>♛ Host → Hra → Double Board</strong> na počet rúk (1–{MAX_SPECIAL_HANDS}) alebo <strong>natrvalo</strong>; platí od ďalšej rozdanej ruky. Pred prvou rukou sa všetkým ukážu pravidlá.
+              </>,
+              <>
+                Kombinuje sa s variantom — <strong>Hold'em</strong>, <strong>Omaha</strong> (na každom boarde presne 2 karty z ruky + 3 z daného boardu) aj <strong>Pineapple</strong> — a tiež so 7-2 a s Prasiatkom.
+              </>,
+              <>
+                <strong>Pineapple</strong>: kartu zahodíš <strong>po preflope ako vždy</strong> (pred flopmi), potom sa vyložia oba boardy — na oba hráš s rovnakými 2 kartami.
+              </>,
+              <>
+                Každý board sa vyhodnocuje <strong>samostatne</strong> — kombinácia sa skladá z kariet v ruke a kariet <strong>jedného</strong> boardu, boardy sa nemiešajú.
+              </>,
+              <>
+                Pri každom pote (aj side pote) sa suma delí na polovicu; ak sa nedá rozdeliť presne, <strong>nepárny žetón ide vrchnému boardu</strong>. Remíza na jednom boarde delí jeho polovicu.
+              </>,
+              <>
+                <strong>Scoop</strong> = najlepšia ruka na oboch boardoch → berieš celý bank.
+              </>,
+              <>
+                V Double Board ruke sa pri all-ine <strong>nehlasuje o viac behoch</strong> (2 boardy už sú) a po ruke sa nedá <strong>odkryť board</strong>.
+              </>,
+            ]}
+          />
+          <p className="help-example">
+            Príklad: v pote je 10 €. Vrchný board vyhrá Juraj s farbou, spodný Zuzka s postupkou → každý berie 5 €. Keby Juraj vyhral oba, berie celých 10 €.
+          </p>
+        </>
+      ),
+      atTable: ({ view }) => {
+        const liveDoubleHand = !!view.hand && view.hand.street !== 'complete' && !!view.hand.rules.doubleBoard;
+        return view.doubleBoard || liveDoubleHand ? (
+          <>
+            Double Board je zapnutý: <strong>{doubleBoardLabel(view.doubleBoard, liveDoubleHand)}</strong>
+          </>
+        ) : null;
+      },
     },
     {
       id: 'seven-deuce',
@@ -469,7 +516,7 @@ function chapters(zoom: (src: string, alt: string) => void): Chapter[] {
                 <strong>All-in</strong> = vložíš všetky žetóny. Čo ostatní stavia navyše, ide do <strong>vedľajšieho potu (side pot)</strong>, o ktorý hrajú len tí, čo na to mali.
               </>,
               <>
-                Keď sú všetci all-in pred riverom, hráči v ruke majú {RUN_VOTE_SEC} s na voľbu, <strong>koľkokrát sa board dorozdá — 1×, 2× alebo 3×</strong>. Platí <strong>najmenšia</strong> voľba a pot sa rozdelí medzi behy.
+                Keď sú všetci all-in pred riverom, hráči v ruke majú {RUN_VOTE_SEC} s na voľbu, <strong>koľkokrát sa board dorozdá — 1×, 2× alebo 3×</strong>. Platí <strong>najmenšia</strong> voľba a pot sa rozdelí medzi behy. V ruke s <strong>Double Board</strong> sa nehlasuje — oba boardy sa dorozdajú raz.
               </>,
               <>Karty hráčov v all-ine sa odkryjú a board sa dorozdáva pomaly, nech je čas to vidieť.</>,
             ]}
@@ -670,7 +717,7 @@ function chapters(zoom: (src: string, alt: string) => void): Chapter[] {
                 </tr>
                 <tr>
                   <th>★ Spoluhost</th>
-                  <td>spustiť a pozastaviť hru, meniť pravidlá (platia od ďalšej ruky), špeciálne kolá, 7-2, Prasiatko, jukebox, púšťať nových hráčov, vyhodiť hráča, prideliť práva hosta a rolu bankára</td>
+                  <td>spustiť a pozastaviť hru, meniť pravidlá (platia od ďalšej ruky), špeciálne kolá, Double Board, 7-2, Prasiatko, jukebox, púšťať nových hráčov, vyhodiť hráča, prideliť práva hosta a rolu bankára</td>
                 </tr>
                 <tr>
                   <th>🏦 Bankár</th>

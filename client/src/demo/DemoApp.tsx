@@ -99,6 +99,7 @@ const handlers: TableHandlers = {
     setBanker: noop,
     setAdmin: noop,
     piggy: noop,
+    doubleBoard: noop,
     toLobby: noop,
     deleteTable: async () => null,
     resolveJoin: noop,
@@ -170,7 +171,19 @@ const SCREENS = [
   'room-departed',
   'host-modes',
   'help',
+  'double-board',
+  'double-board-scoop',
+  'double-board-flop',
+  'host-double-board',
+  'mode-intro-double-board',
 ];
+
+/** Double Board demo: pravidlá ruky s dvoma boardmi (Hold'em alebo Omaha). */
+function doubleBoardRules(variant: 'holdem' | 'omaha' = 'holdem') {
+  return variant === 'omaha'
+    ? { variant, structure: 'pot-limit' as const, sevenDeuce: false, sevenDeuceBounty: 40, smallBlind: 10, bigBlind: 20, doubleBoard: true }
+    : { variant, structure: 'no-limit' as const, sevenDeuce: false, sevenDeuceBounty: 40, smallBlind: 10, bigBlind: 20, doubleBoard: true };
+}
 
 /** Stôl pred prvou rukou: čakacia miestnosť (`lobby`) alebo losovanie o dealer button (`draw`). */
 function preGameView(overrides: Partial<TableView>): TableView {
@@ -487,6 +500,110 @@ function scenario(screen: string): Scenario | null {
             : player,
       );
       return { view: demoView({ players, legal: null, hand: demoHand({ toActId: 'p3' }) }), ui: { returnOpen: true } };
+    }
+    case 'double-board': {
+      // Showdown na dvoch boardoch: vrchný berie Zuzka (farba), spodný Juraj (trojica) — bank sa delí na polovicu.
+      const hands: Record<string, [Card[], string, string]> = {
+        me: [['Ah', 'Kh'] as Card[], 'Pár — králi', 'Pár — dolníky'],
+        p1: [['Js', 'Ts'] as Card[], 'Vyššia karta — kráľ', 'Trojica — dolníky'],
+        p3: [['Ad', '5d'] as Card[], 'Farba — eso navrchu', 'Pár — dolníky'],
+        p4: [['9c', '9h'] as Card[], 'Trojica — deviatky', 'Dva páry — dolníky a deviatky'],
+      };
+      const players = demoPlayers().map((player) => {
+        const hand = hands[player.id];
+        return hand ? { ...player, bet: 0, cards: hand[0], handDescription: hand[1], secondHandDescription: hand[2] } : { ...player, bet: 0 };
+      });
+      return {
+        view: demoView({
+          players,
+          doubleBoard: { remaining: 2, permanent: false },
+          hand: demoHand({
+            street: 'complete',
+            board: ['Kd', '9d', '4d', 'Qs', '2c'] as Card[],
+            secondBoard: ['Jh', 'Jc', '7s', '3h', '8c'] as Card[],
+            toActId: null,
+            turnDeadline: null,
+            turnBaseDeadline: null,
+            rules: doubleBoardRules(),
+          }),
+          legal: null,
+          lastResult: {
+            handNumber: 27,
+            winners: [
+              { playerId: 'p3', amount: 1100, potIndex: 0, handDescription: 'Farba — eso navrchu', bestCards: ['Ad', '5d', 'Kd', '9d', '4d'] as Card[], board: 0 },
+              { playerId: 'p1', amount: 1100, potIndex: 0, handDescription: 'Trojica — dolníky', bestCards: ['Js', 'Jh', 'Jc', 'Ts', '8c'] as Card[], board: 1 },
+            ],
+            bounty: null,
+            revealed: {},
+            wonWithoutShowdown: false,
+          },
+          nextHandAt: Date.now() + 4000,
+        }),
+      };
+    }
+    case 'double-board-scoop': {
+      // Omaha s dvoma boardmi natrvalo: Milan má najlepšiu ruku na oboch boardoch a berie celý bank.
+      const hands: Record<string, [Card[], string, string]> = {
+        me: [['Qh', 'Jh', 'Ts', '4c'] as Card[], 'Farba — eso navrchu', 'Full house — desiatky a dámy'],
+        p1: [['As', 'Ks', '8d', '8h'] as Card[], 'Dva páry — esá a králi', 'Pár — desiatky'],
+        p3: [['Kc', 'Qd', '6d', '5d'] as Card[], 'Pár — králi', 'Dva páry — dámy a desiatky'],
+        p4: [['9c', '9h', '3c', '3d'] as Card[], 'Trojica — deviatky', 'Dva páry — desiatky a deviatky'],
+      };
+      const players = demoPlayers().map((player) => {
+        const hand = hands[player.id];
+        return hand ? { ...player, bet: 0, cards: hand[0], cardCount: 4, handDescription: hand[1], secondHandDescription: hand[2] } : { ...player, bet: 0, cardCount: 4 };
+      });
+      return {
+        view: demoView({
+          players,
+          nextHand: { variant: 'omaha', permanent: true },
+          doubleBoard: { remaining: 0, permanent: true },
+          hand: demoHand({
+            street: 'complete',
+            board: ['Ah', 'Kh', '7c', '2h', '9s'] as Card[],
+            secondBoard: ['Tc', 'Td', '6h', '5s', 'Qc'] as Card[],
+            toActId: null,
+            turnDeadline: null,
+            turnBaseDeadline: null,
+            rules: doubleBoardRules('omaha'),
+          }),
+          legal: null,
+          lastResult: {
+            handNumber: 27,
+            winners: [
+              { playerId: 'me', amount: 1100, potIndex: 0, handDescription: 'Farba — eso navrchu', bestCards: ['Qh', 'Jh', 'Ah', 'Kh', '2h'] as Card[], board: 0 },
+              { playerId: 'me', amount: 1100, potIndex: 0, handDescription: 'Full house — desiatky a dámy', bestCards: ['Ts', 'Qh', 'Tc', 'Td', 'Qc'] as Card[], board: 1 },
+            ],
+            bounty: null,
+            revealed: {},
+            wonWithoutShowdown: false,
+          },
+          nextHandAt: Date.now() + 4000,
+        }),
+      };
+    }
+    case 'double-board-flop':
+    case 'host-double-board':
+      // Rozohraná ruka na flope s dvoma boardmi (Milan je na ťahu); `host-double-board` otvorí panel hosta.
+      return {
+        view: demoView({
+          players: demoPlayers().map((player) => (player.id === 'me' ? { ...player, secondHandDescription: 'Pár — králi' } : player)),
+          doubleBoard: { remaining: 3, permanent: false },
+          hand: demoHand({ board: ['Qh', '7h', '2h'] as Card[], secondBoard: ['Ks', '5c', '8d'] as Card[], rules: doubleBoardRules() }),
+        }),
+        ui: screen === 'host-double-board' ? { hostOpen: true, hostTab: 'game' } : undefined,
+      };
+    case 'mode-intro-double-board': {
+      const players = demoPlayers().map((player) => ({ ...player, inHand: false, status: null, bet: 0, cards: [], cardCount: 0, lastAction: null, handDescription: null }));
+      return {
+        view: demoView({
+          players,
+          hand: null,
+          legal: null,
+          doubleBoard: { remaining: 5, permanent: false },
+          modeIntro: demoModeIntro({ mode: 'double-board', acknowledged: ['me', 'p3'] }),
+        }),
+      };
     }
     case 'mode-intro-piggy':
     case 'mode-intro-omaha': {

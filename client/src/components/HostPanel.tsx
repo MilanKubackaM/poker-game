@@ -1,12 +1,12 @@
 import { useState } from 'react';
-import type { DealerChoice, NextHandOverride, PiggyCommand, Settlement, TableSettings, TableView, Variant } from '../../../shared/types';
+import type { DealerChoice, DoubleBoardCommand, NextHandOverride, PiggyCommand, Settlement, TableSettings, TableView, Variant } from '../../../shared/types';
 import { MAX_PIGGY_GAMES, MAX_SPECIAL_HANDS, VARIANT_LABELS } from '../../../shared/constants';
 import { formatMoney } from '../../../shared/money';
 import { handsLabel } from '../../../shared/plural';
 import { isAdmin, isOwner } from '../roles';
 import { HostPlayersList } from './HostPlayers';
 import { RulesForm } from './HostRules';
-import { gamesLabel, piggyContinues, piggySeriesLabel } from './GameModes';
+import { DoubleBoardIcon, doubleBoardHandsLeft, doubleBoardLabel, gamesLabel, handCountLabel, piggyContinues, piggySeriesLabel } from './GameModes';
 import '../seatMenu.css';
 
 export interface HostActions {
@@ -22,6 +22,8 @@ export interface HostActions {
   setAdmin: (playerId: string, admin: boolean) => void;
   /** Mód Prasiatko: spustiť sériu / ukončiť po tejto hre / zrušiť hneď (pri zrušení sa vstupy vrátia). */
   piggy: (command: PiggyCommand) => void;
+  /** Mód Double Board: zapnúť na počet rúk / natrvalo, alebo vypnúť (platí od ďalšej ruky). */
+  doubleBoard: (command: DoubleBoardCommand) => void;
   toLobby: () => void;
   /** Len zakladateľ: zmaže stôl po zadaní jeho kódu; vráti chybu servera alebo null. */
   deleteTable: (code: string) => Promise<string | null>;
@@ -192,6 +194,81 @@ function PiggyHostCard({ view, actions }: { view: TableView; actions: HostAction
   );
 }
 
+/**
+ * Double Board — nezávislý od variantu, takže sa kombinuje s Hold'em, Omahou aj Pineapple. Počas behu sa počet rúk
+ * dá meniť (server ho prepíše); `remaining` je po rozdaní ruky už bez nej, preto pri Double Board ruke „Po tejto ruke“.
+ */
+function DoubleBoardHostCard({ view, actions }: { view: TableView; actions: HostActions }) {
+  const doubleBoard = view.doubleBoard ?? null;
+  const handLive = !!view.hand && view.hand.street !== 'complete';
+  const liveDoubleHand = handLive && !!view.hand!.rules.doubleBoard;
+  const [handsDraft, setHandsDraft] = useState(1);
+  const [permanentDraft, setPermanentDraft] = useState(false);
+  const permanent = doubleBoard ? doubleBoard.permanent : permanentDraft;
+  const hands = doubleBoard && !doubleBoard.permanent ? doubleBoard.remaining : handsDraft;
+  const command = (isPermanent: boolean, count: number): DoubleBoardCommand => (isPermanent ? { action: 'start', permanent: true } : { action: 'start', hands: count });
+  const changeHands = (value: number) => {
+    const next = Math.max(1, Math.min(MAX_SPECIAL_HANDS, value));
+    setHandsDraft(next);
+    if (doubleBoard) {
+      actions.doubleBoard(command(false, next));
+    }
+  };
+  const changePermanent = (value: boolean) => {
+    setPermanentDraft(value);
+    if (doubleBoard) {
+      actions.doubleBoard(command(value, hands));
+    }
+  };
+  const variant = view.nextHand?.variant ?? view.settings.defaultVariant;
+  const status = !doubleBoard
+    ? null
+    : liveDoubleHand
+      ? `beží · ${doubleBoardLabel(doubleBoard, true)}`
+      : `od ďalšej ruky · ${doubleBoard.permanent ? 'natrvalo' : handCountLabel(doubleBoard.remaining)}`;
+  return (
+    <>
+      <CountStepper
+        label={doubleBoard && liveDoubleHand ? 'Po tejto ruke' : 'Počet rúk'}
+        unit="rúk"
+        value={hands}
+        max={MAX_SPECIAL_HANDS}
+        permanent={permanent}
+        onChange={changeHands}
+        onPermanent={changePermanent}
+        extra={doubleBoard ? (doubleBoard.permanent ? 'beží natrvalo' : `zostáva ${handCountLabel(doubleBoardHandsLeft(doubleBoard, liveDoubleHand))}`) : null}
+      />
+      <div className="special-grid">
+        <button
+          type="button"
+          className={doubleBoard ? 'special-card active' : 'special-card'}
+          onClick={() => actions.doubleBoard(doubleBoard ? { action: 'stop' } : command(permanent, hands))}
+        >
+          <span className="special-icon">
+            <DoubleBoardIcon />
+          </span>
+          <span className="special-title">
+            Double Board
+            {status && <span className="mode-series"> · {status}</span>}
+          </span>
+          <span className="special-text">
+            {doubleBoard
+              ? `Hrá sa ${VARIANT_LABELS[variant]} s dvoma boardmi — bank na polovicu, kto vyhrá oba boardy, berie všetko.`
+              : 'Dva samostatné boardy (2× flop, turn, river). Bank sa delí na polovicu medzi víťazov vrchného a spodného boardu, kto vyhrá oba, berie celý bank. Kombinuje sa s Omahou aj Pineapple.'}
+          </span>
+          <span className="special-flag">{doubleBoard ? (doubleBoard.permanent ? 'Natrvalo ✓' : 'Zapnuté ✓') : permanent ? 'Zapnúť natrvalo' : `Zapnúť na ${hands === 1 ? '1 ruku' : handCountLabel(hands)}`}</span>
+        </button>
+      </div>
+      {doubleBoard && (
+        <button type="button" className="btn btn-ghost" onClick={() => actions.doubleBoard({ action: 'stop' })}>
+          Vypnúť Double Board{liveDoubleHand ? ' po tejto ruke' : ''}
+        </button>
+      )}
+      {!doubleBoard && liveDoubleHand && <p className="hint">Táto ruka sa ešte dohrá s dvoma boardmi.</p>}
+    </>
+  );
+}
+
 function GameTab({ view, actions }: { view: TableView; actions: HostActions }) {
   const [message, setMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -333,6 +410,11 @@ function GameTab({ view, actions }: { view: TableView; actions: HostActions }) {
             {override.variant ? `Vypnúť ${VARIANT_LABELS[override.variant]} od ďalšej ruky` : 'Zrušiť špeciálne kolo'}
           </button>
         )}
+      </section>
+
+      <section className="host-section">
+        <h3>Double Board</h3>
+        <DoubleBoardHostCard view={view} actions={actions} />
       </section>
 
       <section className="host-section">

@@ -1,11 +1,11 @@
 import { randomBytes, randomInt, randomUUID } from 'node:crypto';
-import type { Avatar, Card, DealerChoice, DrawStage, DrawView, GameMode, HandHistoryEntry, HandHistoryWinner, HandResultView, HandRules, LeaderboardRow, LedgerEntry, LedgerKind, MissedBlinds, ModeIntroView, MyHandRecord, NextHandOverride, PiggyCommand, PiggyView, RabbitView, RunVoteView, PlayerAction, ReturnMode, SeatPlayerView, Settlement, TableEvent, TablePhase, TableSettings, TableStateView, TableSummary, TableView, Variant } from '../shared/types';
+import type { Avatar, Card, DealerChoice, DrawStage, DrawView, GameMode, HandHistoryEntry, HandHistoryWinner, HandResultView, HandRules, LeaderboardRow, LedgerEntry, LedgerKind, MissedBlinds, ModeIntroView, MyHandRecord, NextHandOverride, DoubleBoardCommand, DoubleBoardView, PiggyCommand, PiggyView, RabbitView, RunVoteView, PlayerAction, ReturnMode, SeatPlayerView, Settlement, TableEvent, TablePhase, TableSettings, TableStateView, TableSummary, TableView, Variant } from '../shared/types';
 import { CURRENCIES, CURRENCY_LABELS, DEFAULT_SETTINGS, DISCARD_TIMEOUT_SEC, DRAW_ACK_TIMEOUT_SEC, DRAW_PICK_TIMEOUT_SEC, DRAW_RESULT_MS, DRAW_SUIT_ORDER, HAND_PAUSE_MS, HOLE_CARD_COUNT, MAX_CHIPS, MAX_HISTORY_HANDS, MAX_NOTE_LENGTH, MAX_SEATS, MAX_SPECIAL_HANDS, MAX_TABLE_NAME_LENGTH, RABBIT_SHOW_MS, RUN_VOTE_SEC, MIN_PLAYERS_TO_START, MODE_INTRO_TIMEOUT_SEC, MAX_PIGGY_GAMES, PIGGY_CELEBRATION_MS, PIGGY_TARGET_WINS, RUNOUT_STEP_MS, TIME_BANK_MAX_SEC, TIME_BANK_MIN_SEC, TIME_BANK_SAVED_RATIO, SUIT_SYMBOLS, VARIANT_LABELS } from '../shared/constants';
 import { formatMoney } from '../shared/money';
 import { handsLabel } from '../shared/plural';
 import { computeCashout, isChipEntry, type Cashout } from '../shared/settlement';
 import { LIMITS } from './limits';
-import { HandEngine, blindSeats, type EngineLog, type HandSeat } from './poker/HandEngine';
+import { HandEngine, blindSeats, type EngineLog, type EnginePlayer, type HandSeat } from './poker/HandEngine';
 import { splitAmount } from './poker/pots';
 import { freshDeck, rankValue, shuffle, suitOf } from './poker/cards';
 import { FairDealer, type PersistedFair } from './FairDealer';
@@ -27,13 +27,15 @@ const SESSION_EXPIRED = 'Relácia vypršala';
 const TABLE_FULL_ON_RETURN = 'Stôl je plný — počkaj, kým sa uvoľní miesto';
 const ALREADY_MEMBER = 'Pri tomto stole už máš miesto';
 export const SEAT_OF_OTHER_ACCOUNT = 'Toto miesto už patrí inému účtu';
-const GAME_MODES: GameMode[] = ['omaha', 'pineapple', 'seven-deuce', 'piggy'];
+const GAME_MODES: GameMode[] = ['omaha', 'pineapple', 'seven-deuce', 'piggy', 'double-board'];
 const MODE_LABELS: Record<GameMode, string> = {
   omaha: VARIANT_LABELS.omaha,
   pineapple: VARIANT_LABELS.pineapple,
   'seven-deuce': 'Pravidlo 7-2',
   piggy: 'Prasiatko',
+  'double-board': 'Double Board',
 };
+const DOUBLE_BOARD_OFF = 'Double Board nie je zapnutý';
 const SETTINGS_KEYS: (keyof TableSettings)[] = ['name', 'currency', 'smallBlind', 'bigBlind', 'defaultVariant', 'sevenDeuceAlways', 'sevenDeuceBounty', 'actionTimeoutSec', 'timeBankSec', 'omahaPotLimit'];
 
 export interface TablePlayer {
@@ -235,6 +237,8 @@ export interface TableSnapshot {
   piggy?: PersistedPiggy | null;
   /** Módy poslednej rozdanej ruky — ich úvodný dialóg sa pri ďalšej ruke neopakuje. */
   dealtModes?: GameMode[];
+  /** Mód Double Board (staršie súbory pole nemajú → vypnutý). */
+  doubleBoard?: DoubleBoardView | null;
   /** Ante z odkrytí boardu čakajúce na ďalšiu ruku (aj z ruky zrušenej reštartom). */
   pendingAnte?: AnteEntry[];
   /** Členovia, ktorí od stola odišli a môžu sa vrátiť so svojím stackom (staršie súbory pole nemajú). */
@@ -288,6 +292,8 @@ export class Table {
   readonly records = new Map<string, PlayerRecord>();
   settings: TableSettings;
   nextHand: NextHandOverride | null = null;
+  /** Mód Double Board (null = vypnutý) — platí od najbližšej rozdanej ruky, kombinuje sa s variantom aj ostatnými módmi. */
+  doubleBoard: DoubleBoardView | null = null;
   phase: TablePhase = 'lobby';
   draw: DrawState | null = null;
   running = false;
@@ -345,6 +351,8 @@ export class Table {
   private dealtModes = new Set<GameMode>();
   /** Variant špeciálneho kola poslednej rozdanej ruky (null = bežná ruka) — z neho sa hlási koniec špeciálneho kola. */
   private specialInHand: Variant | null = null;
+  /** Posledná rozdaná ruka bola Double Board — z toho sa hlási koniec módu. */
+  private doubleBoardInHand = false;
   /** Módy, ktorých pravidlá už všetci potvrdili pre najbližšiu ruku. */
   private readonly introDone = new Set<GameMode>();
   private introTimer: NodeJS.Timeout | null = null;
@@ -1439,6 +1447,49 @@ export class Table {
   }
 
   /**
+   * Mód Double Board: `start` na `hands` rúk (1…MAX_SPECIAL_HANDS, predvolene 1) alebo `permanent` — natrvalo, kým ho
+   * host nevypne; `stop` ho vypne. Platí od najbližšej rozdanej ruky (rozohraná ruka sa dohrá, ako sa rozdala) a
+   * kombinuje sa s variantom (Hold'em, Omaha, Pineapple), 7-2 aj Prasiatkom. Každá zmena ide všetkým ako `mode`.
+   */
+  hostDoubleBoard(command: DoubleBoardCommand): Result {
+    const live = !!this.engine && !this.engine.isComplete && this.doubleBoardInHand;
+    if (command?.action === 'stop') {
+      if (!this.doubleBoard) {
+        return { ok: false, error: DOUBLE_BOARD_OFF };
+      }
+      this.doubleBoard = null;
+      this.event('mode', `Double Board vypnutý — ${live ? 'po tejto ruke sa' : 'znova sa'} hrá s jedným boardom`);
+      this.revalidateIntro();
+      this.changed();
+      return { ok: true };
+    }
+    if (command?.action !== 'start') {
+      return { ok: false, error: 'Neplatná voľba' };
+    }
+    const permanent = command.permanent ?? false;
+    const hands = command.hands ?? 1;
+    if (typeof permanent !== 'boolean') {
+      return { ok: false, error: 'Neplatná voľba' };
+    }
+    if (!permanent && (typeof hands !== 'number' || !Number.isInteger(hands) || hands < 1 || hands > MAX_SPECIAL_HANDS)) {
+      return { ok: false, error: `Počet rúk musí byť 1 až ${MAX_SPECIAL_HANDS}` };
+    }
+    const previous = this.doubleBoard;
+    this.doubleBoard = permanent ? { remaining: 0, permanent: true } : { remaining: hands, permanent: false };
+    const span = permanent ? 'natrvalo' : `na ${handsAccusative(hands)}`;
+    if (!previous) {
+      this.event('mode', `Double Board ${span} od ďalšej ruky — dva boardy, každý pot sa delí na polovicu`);
+    } else if (permanent && !previous.permanent) {
+      this.event('mode', 'Host mení Double Board: natrvalo — do vypnutia hostom');
+    } else if (!permanent && (previous.permanent || previous.remaining !== hands)) {
+      this.event('mode', `Host mení Double Board: ešte ${handsNominative(hands)}${live ? ' po tejto ruke' : ''}`);
+    }
+    this.revalidateIntro();
+    this.changed();
+    return { ok: true };
+  }
+
+  /**
    * Bankár dobíja (kladná suma) alebo vyberá (záporná) žetóny. `paid` = peniaze prešli hneď (hráč → bankár pri dobití,
    * bankár → hráč pri výbere), `owed` = vyrovná sa v cashoute. Bankárovi samému sa zapíše vždy `paid` (drží vlastné peniaze).
    */
@@ -1745,6 +1796,10 @@ export class Table {
     if (engine.board.length >= 5) {
       return { ok: false, error: 'Board je už celý' };
     }
+    // Double Board: odkrytie by muselo ukázať dva boardy — v tomto móde sa board neodkrýva.
+    if (engine.rules.doubleBoard) {
+      return { ok: false, error: 'V Double Board sa board neodkrýva' };
+    }
     if (this.rabbit?.handNumber === engine.handNumber) {
       return { ok: false, error: `Board už odkryl ${this.rabbit.playerName}` };
     }
@@ -1926,6 +1981,7 @@ export class Table {
         const revealed = result?.revealed[player.id] ?? (tabled ? enginePlayer!.hole : undefined);
         let cards: (Card | null)[] = [];
         let handDescription: string | null = null;
+        let secondHandDescription: string | null = null;
         if (enginePlayer) {
           if (player.id === viewerId || revealed) {
             cards = revealed ?? enginePlayer.hole;
@@ -1934,8 +1990,10 @@ export class Table {
           }
           if (enginePlayer.evaluated && revealed) {
             handDescription = enginePlayer.evaluated.description;
+            secondHandDescription = enginePlayer.secondEvaluated?.description ?? null;
           } else if ((player.id === viewerId || tabled) && engine && engine.board.length >= 3 && enginePlayer.status !== 'folded') {
-            handDescription = currentHandDescription(engine, enginePlayer.hole);
+            handDescription = currentHandDescription(engine, enginePlayer.hole, engine.board);
+            secondHandDescription = engine.rules.doubleBoard ? currentHandDescription(engine, enginePlayer.hole, engine.secondBoard) : null;
           }
         }
         return {
@@ -1964,6 +2022,7 @@ export class Table {
           hasDiscarded: enginePlayer?.discarded ?? false,
           lastAction: enginePlayer?.lastAction ?? null,
           handDescription,
+          ...(engine?.rules.doubleBoard ? { secondHandDescription } : {}),
         };
       });
 
@@ -1977,6 +2036,7 @@ export class Table {
       canChangeSeat: this.canChangeSeat(viewerId),
       settings: this.settings,
       nextHand: this.nextHand,
+      doubleBoard: this.doubleBoard ? { ...this.doubleBoard } : null,
       running: this.running,
       paused: this.paused,
       players,
@@ -1986,6 +2046,7 @@ export class Table {
             rules: engine.rules,
             street: engine.street,
             board: engine.board,
+            ...(engine.rules.doubleBoard ? { secondBoard: [...engine.secondBoard] } : {}),
             ...(engine.runs > 1 || engine.extraBoards.length ? { extraBoards: engine.extraBoards.map((board) => [...board]), runs: engine.runs, runoutBase: engine.runoutBase } : {}),
             pots: engine.isComplete ? [] : engine.pots(),
             totalPot: engine.isComplete ? 0 : engine.totalPot,
@@ -2612,6 +2673,9 @@ export class Table {
     if (rules.variant !== 'holdem') {
       modes.push(rules.variant);
     }
+    if (rules.doubleBoard) {
+      modes.push('double-board');
+    }
     if (rules.sevenDeuce) {
       modes.push('seven-deuce');
     }
@@ -2621,7 +2685,7 @@ export class Table {
     return modes;
   }
 
-  /** Prvý mód najbližšej ruky, ktorý v minulej ruke nebol a ktorého pravidlá ešte nikto nepotvrdil (poradie variant → 7-2 → Prasiatko). */
+  /** Prvý mód najbližšej ruky, ktorý v minulej ruke nebol a ktorého pravidlá ešte nikto nepotvrdil (poradie variant → Double Board → 7-2 → Prasiatko). */
   private pendingIntroMode(): GameMode | null {
     return this.upcomingModes().find((mode) => !this.dealtModes.has(mode) && !this.introDone.has(mode)) ?? null;
   }
@@ -3092,6 +3156,17 @@ export class Table {
       this.event('mode', `Špeciálne kolo ${VARIANT_LABELS[this.specialInHand]} skončilo — znova sa hrá ${VARIANT_LABELS[this.settings.defaultVariant]}`);
     }
     this.specialInHand = special?.variant ?? null;
+    // Double Board sa odpočítava po rozdaných rukách ako špeciálne kolo; natrvalo zapnutý sa neodpočítava.
+    const doubleBoard = this.doubleBoard;
+    const doubleBoardLeft = doubleBoard && !doubleBoard.permanent ? doubleBoard.remaining - 1 : 0;
+    if (doubleBoard && !doubleBoard.permanent) {
+      this.doubleBoard = doubleBoardLeft > 0 ? { remaining: doubleBoardLeft, permanent: false } : null;
+    }
+    const doubleBoardContinues = !!doubleBoard?.permanent && this.doubleBoardInHand;
+    if (this.doubleBoardInHand && !doubleBoard) {
+      this.event('info', 'Double Board skončil — znova sa hrá s jedným boardom');
+    }
+    this.doubleBoardInHand = !!doubleBoard;
     this.lastResult = null;
     this.rabbit = null;
     this.clearRunVote();
@@ -3104,6 +3179,7 @@ export class Table {
       dealerSeat: dealer.seat,
       seats: lineup.seats.map((seat) => ({ id: seat.id, seat: seat.seat })),
       holeCount: HOLE_CARD_COUNT[rules.variant],
+      doubleBoard: !!rules.doubleBoard,
     });
     this.fairRoundOfHand = fairDeal.proof.roundId;
     this.engine = new HandEngine({
@@ -3128,6 +3204,13 @@ export class Table {
       }
     } else if (special) {
       this.event('host', `Špeciálne kolo: ${describeOverride(special)}${remaining > 0 ? ` — po tejto ruke ešte ${handsLabel(remaining)}` : ' — posledná ruka'}`);
+    }
+    if (doubleBoard?.permanent) {
+      if (!doubleBoardContinues) {
+        this.event('host', 'Double Board — natrvalo, kým ho host nevypne');
+      }
+    } else if (doubleBoard) {
+      this.event('host', `Double Board${doubleBoardLeft > 0 ? ` — po tejto ruke ešte ${handsNominative(doubleBoardLeft)}` : ' — posledná ruka'}`);
     }
     this.engine.start();
     this.trackMissedBlinds(this.engine);
@@ -3211,6 +3294,7 @@ export class Table {
       sevenDeuceBounty: this.settings.sevenDeuceBounty,
       smallBlind: this.settings.smallBlind,
       bigBlind: this.settings.bigBlind,
+      ...(this.doubleBoard ? { doubleBoard: true } : {}),
     };
   }
 
@@ -3273,26 +3357,32 @@ export class Table {
   private recordHand(engine: HandEngine): void {
     const result = engine.result!;
     const nameOf = (id: string) => this.players.get(id)?.name ?? this.records.get(id)?.name ?? engine.player(id)?.name ?? 'Hráč';
+    // Riadok histórie = hráč (v Double Board hráč a board — kto berie oba boardy, má dva riadky).
     const wonBy = new Map<string, HandHistoryWinner>();
+    const wonTotal = new Map<string, number>();
     for (const winner of result.winners) {
-      const existing = wonBy.get(winner.playerId);
+      wonTotal.set(winner.playerId, (wonTotal.get(winner.playerId) ?? 0) + winner.amount);
+      const key = winner.board === undefined ? winner.playerId : `${winner.playerId}:${winner.board}`;
+      const existing = wonBy.get(key);
       if (existing) {
         existing.amount += winner.amount;
         existing.handDescription ??= winner.handDescription;
         continue;
       }
-      wonBy.set(winner.playerId, {
+      wonBy.set(key, {
         playerId: winner.playerId,
         playerName: nameOf(winner.playerId),
         amount: winner.amount,
         handDescription: winner.handDescription,
         cards: [...(result.revealed[winner.playerId] ?? [])],
+        ...(winner.board !== undefined ? { board: winner.board } : {}),
       });
     }
     for (const enginePlayer of engine.players) {
       const record = this.records.get(enginePlayer.id) ?? { id: enginePlayer.id, name: nameOf(enginePlayer.id), avatar: this.players.get(enginePlayer.id)?.avatar ?? { emoji: '🃏', color: '#264653' }, handsPlayed: 0, handsWon: 0, biggestPot: 0 };
       record.handsPlayed += 1;
-      const won = wonBy.get(enginePlayer.id)?.amount ?? 0;
+      // Výhra ruky = akýkoľvek vyhraný podiel (aj jeden board v Double Board); najväčší pot = súčet podielov ruky.
+      const won = wonTotal.get(enginePlayer.id) ?? 0;
       if (won > 0) {
         record.handsWon += 1;
         record.biggestPot = Math.max(record.biggestPot, won);
@@ -3309,6 +3399,7 @@ export class Table {
       dealerName: dealer ? nameOf(dealer.id) : '',
       board: [...engine.board],
       ...(engine.extraBoards.length ? { extraBoards: engine.extraBoards.map((board) => [...board]) } : {}),
+      ...(engine.rules.doubleBoard ? { secondBoard: [...engine.secondBoard] } : {}),
       totalPot: winners.reduce((sum, winner) => sum + winner.amount, 0),
       wonWithoutShowdown: result.wonWithoutShowdown,
       winners,
@@ -3323,9 +3414,9 @@ export class Table {
       const folded = enginePlayer.status === 'folded';
       holes[enginePlayer.id] = {
         cards: [...enginePlayer.hole],
-        net: (wonBy.get(enginePlayer.id)?.amount ?? 0) - (enginePlayer.total + enginePlayer.dead),
+        net: (wonTotal.get(enginePlayer.id) ?? 0) - (enginePlayer.total + enginePlayer.dead),
         folded,
-        handDescription: !folded && !result.wonWithoutShowdown ? (enginePlayer.evaluated?.description ?? null) : null,
+        handDescription: !folded && !result.wonWithoutShowdown ? showdownDescription(enginePlayer) : null,
       };
     }
     this.holeHistory.push({ handNumber: engine.handNumber, players: holes });
@@ -3666,6 +3757,7 @@ export class Table {
           }
         : null,
       dealtModes: engine && this.preHand ? [...this.preHand.dealtModes] : [...this.dealtModes],
+      doubleBoard: this.doubleBoard ? { ...this.doubleBoard } : null,
       pendingAnte: [...(engine ? this.handAnte : []), ...this.pendingAnte].map((entry) => ({ ...entry })),
       departed: [...this.departed.values()].map((member) => ({
         id: member.id,
@@ -3740,6 +3832,7 @@ export class Table {
       };
     }
     table.dealtModes = new Set((snapshot.dealtModes ?? []).filter((mode) => GAME_MODES.includes(mode)));
+    table.doubleBoard = restoreDoubleBoard(snapshot.doubleBoard);
     table.pendingAnte = (snapshot.pendingAnte ?? [])
       .filter((entry) => typeof entry?.playerId === 'string' && Number.isInteger(entry.amount) && entry.amount > 0)
       .map((entry) => ({ playerId: entry.playerId, amount: entry.amount }));
@@ -3846,26 +3939,36 @@ export class Table {
   }
 }
 
-function currentHandDescription(engine: HandEngine, hole: Card[]): string | null {
+/** Popis ruky v showdowne; v Double Board „vrchný / spodný“ (napr. „Pár dám / Flush“). */
+function showdownDescription(player: EnginePlayer): string | null {
+  const top = player.evaluated?.description ?? null;
+  const bottom = player.secondEvaluated?.description;
+  return top && bottom ? `${top} / ${bottom}` : top;
+}
+
+function currentHandDescription(engine: HandEngine, hole: Card[], board: Card[]): string | null {
   try {
     if (engine.rules.variant === 'omaha') {
-      return hole.length >= 2 ? evaluateOmaha(hole, engine.board).description : null;
+      return hole.length >= 2 ? evaluateOmaha(hole, board).description : null;
     }
-    return hole.length + engine.board.length >= 5 ? evaluateHoldem(hole.slice(0, hole.length), engine.board).description : null;
+    return hole.length + board.length >= 5 ? evaluateHoldem(hole.slice(0, hole.length), board).description : null;
   } catch {
     return null;
   }
 }
 
-/** Prepíše riadky výhercov z `fromId` na `toId`; keď v tej istej ruke vyhrali obaja, sumy sa spoja do jedného riadku. */
-function mergeRows<T extends { playerId: string; playerName: string; amount: number }>(rows: T[], fromId: string, toId: string, toName: string): T[] {
+/**
+ * Prepíše riadky výhercov z `fromId` na `toId`; keď v tej istej ruke vyhrali obaja, sumy sa spoja do jedného riadku
+ * (v Double Board zvlášť pre každý board).
+ */
+function mergeRows<T extends { playerId: string; playerName: string; amount: number; board?: 0 | 1 }>(rows: T[], fromId: string, toId: string, toName: string): T[] {
   if (!rows.some((row) => row.playerId === fromId)) {
     return rows;
   }
   const merged: T[] = [];
   for (const row of rows) {
     const current = row.playerId === fromId ? { ...row, playerId: toId, playerName: toName } : { ...row };
-    const existing = merged.find((other) => other.playerId === current.playerId);
+    const existing = merged.find((other) => other.playerId === current.playerId && other.board === current.board);
     if (existing) {
       existing.amount += current.amount;
     } else {
@@ -3917,6 +4020,28 @@ function restorePiggySeries(saved: PersistedPiggy): PiggySeries {
   const remaining = !permanent && Number.isInteger(saved.remaining) && saved.remaining! >= 1 && saved.remaining! <= MAX_PIGGY_GAMES ? saved.remaining! : 1;
   const games = !permanent && Number.isInteger(saved.games) && saved.games! >= remaining && saved.games! <= MAX_PIGGY_GAMES ? saved.games! : remaining;
   return { games, remaining, permanent, stopping: saved.stopping === true };
+}
+
+/** „1 ruku“, „3 ruky“, „5 rúk“ (na koľko rúk). */
+function handsAccusative(count: number): string {
+  return `${count} ${count === 1 ? 'ruku' : count >= 2 && count <= 4 ? 'ruky' : 'rúk'}`;
+}
+
+/** „1 ruka“, „3 ruky“, „5 rúk“ (koľko rúk ešte zostáva). */
+function handsNominative(count: number): string {
+  return `${count} ${count === 1 ? 'ruka' : count >= 2 && count <= 4 ? 'ruky' : 'rúk'}`;
+}
+
+/** Uložený mód Double Board — neplatné hodnoty (poškodený súbor) mód vypnú. */
+function restoreDoubleBoard(saved: DoubleBoardView | null | undefined): DoubleBoardView | null {
+  if (!saved || typeof saved !== 'object') {
+    return null;
+  }
+  if (saved.permanent === true) {
+    return { remaining: 0, permanent: true };
+  }
+  const remaining = saved.remaining;
+  return Number.isInteger(remaining) && remaining >= 1 && remaining <= MAX_SPECIAL_HANDS ? { remaining, permanent: false } : null;
 }
 
 function describeOverride(override: NextHandOverride): string {

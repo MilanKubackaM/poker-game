@@ -46,7 +46,10 @@ export interface EnginePlayer {
   canRaise: boolean;
   discarded: boolean;
   lastAction: string | null;
+  /** Najlepšia ruka v showdowne na (vrchnom) boarde. */
   evaluated: EvaluatedHand | null;
+  /** Double Board: najlepšia ruka v showdowne na spodnom boarde. */
+  secondEvaluated: EvaluatedHand | null;
 }
 
 export interface HandResult {
@@ -73,6 +76,8 @@ export class HandEngine {
   bigBlindSeat = -1;
   street: Street = 'preflop';
   board: Card[] = [];
+  /** Double Board: spodný board — rozdáva sa na každej ulici hneď po vrchnom (`board`), bez ďalšieho pálenia. */
+  readonly secondBoard: Card[] = [];
   currentBet = 0;
   lastRaiseSize = 0;
   toActIndex = -1;
@@ -118,6 +123,7 @@ export class HandEngine {
         discarded: false,
         lastAction: null,
         evaluated: null,
+        secondEvaluated: null,
       }));
     if (!this.players.some((player) => player.seat === this.dealerSeat)) {
       throw new Error('Dealer must be one of the players');
@@ -143,9 +149,12 @@ export class HandEngine {
 
   /**
    * Karty, ktoré by ešte prišli na board, keby sa ruka dohrala (s pálením kariet ako pri bežnom rozdávaní) —
-   * pre zaplatené odkrytie boardu po skončení ruky. Balíček sa nemení.
+   * pre zaplatené odkrytie boardu po skončení ruky. Balíček sa nemení. V Double Board sa board neodkrýva (prázdne).
    */
   remainingBoard(): Card[] {
+    if (this.rules.doubleBoard) {
+      return [];
+    }
     const deck = [...this.deck];
     const cards: Card[] = [];
     let length = this.board.length;
@@ -391,9 +400,12 @@ export class HandEngine {
     this.act(player.id, { type: canCheck ? 'check' : 'fold' });
   }
 
-  /** Koľko behov sa dá dorozdať zo zvyšku balíčka (každý beh potrebuje svoje karty aj pálenie), najviac 3. */
+  /**
+   * Koľko behov sa dá dorozdať zo zvyšku balíčka (každý beh potrebuje svoje karty aj pálenie), najviac 3.
+   * Double Board sa na viac behov nehrá — boardy sú už dva.
+   */
   maxRuns(): number {
-    if (!this.awaitingRunout || this.board.length >= 5) {
+    if (!this.awaitingRunout || this.board.length >= 5 || this.rules.doubleBoard) {
       return 1;
     }
     const streets = this.board.length === 0 ? 3 : this.board.length === 3 ? 2 : 1;
@@ -590,17 +602,21 @@ export class HandEngine {
 
   private dealNextStreet(): void {
     this.draw();
-    if (this.board.length === 0) {
-      this.board.push(this.draw(), this.draw(), this.draw());
-      this.street = 'flop';
-    } else if (this.board.length === 3) {
+    const count = this.board.length === 0 ? 3 : 1;
+    this.street = this.board.length === 0 ? 'flop' : this.board.length === 3 ? 'turn' : 'river';
+    for (let card = 0; card < count; card++) {
       this.board.push(this.draw());
-      this.street = 'turn';
-    } else {
-      this.board.push(this.draw());
-      this.street = 'river';
     }
-    this.log(`${this.street === 'flop' ? 'Flop' : this.street === 'turn' ? 'Turn' : 'River'}: ${this.board.join(' ')}`, 'info');
+    const label = this.street === 'flop' ? 'Flop' : this.street === 'turn' ? 'Turn' : 'River';
+    if (!this.rules.doubleBoard) {
+      this.log(`${label}: ${this.board.join(' ')}`, 'info');
+      return;
+    }
+    // Double Board: po jednom pálení najprv vrchný board, hneď za ním rovnaký počet kariet na spodný.
+    for (let card = 0; card < count; card++) {
+      this.secondBoard.push(this.draw());
+    }
+    this.log(`${label} — vrchný board: ${this.board.join(' ')}, spodný board: ${this.secondBoard.join(' ')}`, 'info');
   }
 
   private moveToNextActor(): void {
@@ -652,12 +668,17 @@ export class HandEngine {
     this.toActIndex = -1;
     const live = this.livePlayers();
     const revealed: Record<string, Card[]> = {};
+    const double = !!this.rules.doubleBoard;
     for (const player of live) {
       player.evaluated = this.evaluate(player, this.board);
+      player.secondEvaluated = double ? this.evaluate(player, this.secondBoard) : null;
       revealed[player.id] = [...player.hole];
     }
-    const boards = [this.board, ...this.extraBoards];
+    // Double Board aj beh viackrát: každý pot sa delí na rovnaké časti medzi boardy (zvyšný žetón vrchnému / prvému behu).
+    const boards = double ? [this.board, this.secondBoard] : [this.board, ...this.extraBoards];
     const multi = boards.length > 1;
+    const evaluatedOn = (player: EnginePlayer, index: number, board: Card[]): EvaluatedHand =>
+      index === 0 ? player.evaluated! : double ? player.secondEvaluated! : this.evaluate(player, board);
     const order = this.orderFrom(this.indexOfSeat(this.dealerSeat) + 1).map((player) => player.id);
     const winners: WinnerView[] = [];
     this.pots().forEach((pot, potIndex) => {
@@ -668,7 +689,7 @@ export class HandEngine {
         const contenders = pot.eligible
           .map((id) => this.player(id))
           .filter((player): player is EnginePlayer => !!player && player.status !== 'folded')
-          .map((player) => ({ player, evaluated: run === 0 ? player.evaluated! : this.evaluate(player, board) }));
+          .map((player) => ({ player, evaluated: evaluatedOn(player, run, board) }));
         if (!contenders.length || share <= 0) {
           return;
         }
@@ -685,14 +706,17 @@ export class HandEngine {
             potIndex,
             handDescription: contender.evaluated.description,
             bestCards: contender.evaluated.cards,
-            ...(multi ? { run } : {}),
+            ...(double ? { board: run as 0 | 1 } : multi ? { run } : {}),
           });
           const potLabel = potIndex === 0 ? 'hlavný pot' : `side pot ${potIndex}`;
-          this.log(`${multi ? `${run + 1}. beh: ` : ''}${contender.player.name} vyhráva ${this.money(amount)} (${potLabel}) — ${contender.evaluated.description}`, 'result', id);
+          const prefix = double ? (run === 0 ? 'Vrchný board: ' : 'Spodný board: ') : multi ? `${run + 1}. beh: ` : '';
+          this.log(`${prefix}${contender.player.name} vyhráva ${this.money(amount)} (${potLabel}) — ${contender.evaluated.description}`, 'result', id);
         }
       });
     });
 
+    // 7-2 bonus: pri behu viackrát rozhoduje prvý beh; v Double Board stačí vyhrať podiel hlavného potu na
+    // ktoromkoľvek z dvoch boardov (`board` 0 aj 1 — `run` tam chýba).
     const bounty = this.applySevenDeuce(winners.filter((winner) => (winner.run ?? 0) === 0));
     this.complete({ winners, bounty, revealed, wonWithoutShowdown: false });
   }
