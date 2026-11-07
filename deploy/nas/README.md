@@ -8,7 +8,9 @@ Na routeri ani na NAS sa neotvára žiadny port — tunel sa pripája z NAS von.
 - Kontajner hry: používateľ `node` (nie root), súborový systém len na čítanie, žiadne Linux capabilities,
   `no-new-privileges`, limit 768 MB RAM, 1 CPU, 128 procesov.
 - Sieť `poker-internal` je `internal` — hra sa nedostane na internet ani do domácej siete; vidí ju len sidecar.
-- Hra vidí len vlastný volume `poker-night_poker-data`, nič z tvojich súborov na NAS.
+- Hra vidí len vlastný volume `poker-night_poker-data` (stoly, účty, fotky) a outbox e-mailov, nič z tvojich súborov na NAS.
+- E-maily odosiela sidecar `poker-mailer` (curl, bez práv, len sieť von): hra zapíše správu do volume `mail-outbox`,
+  sidecar ju pošle cez Gmail a zmaže. Heslo Gmailu vidí len sidecar, hra nie.
 - Sidecar beží v userspace režime (bez `/dev/net/tun` a bez práv navyše) a je to samostatný uzol v tailnete,
   nie tvoj NAS.
 
@@ -33,6 +35,21 @@ adresu (oba konce cez TURN), takže sa ním nedá dostať na internet ani do dom
 (49160–50400) a najviac 1200 alokácií naraz — plný stôl s 9 kamerami ich pri spájaní zaberie až 72. Prihlasovacie údaje dostanú len
 hráči pri stole (HMAC z `TURN_SECRET`, platnosť 24 h). `TURN_SECRET` a `TURN_URLS` sú len na NAS v `deploy/nas/.env`.
 
+## E-maily cez Gmail (overenie e-mailu, zabudnuté heslo)
+Overenie e-mailu je pri registrácii povinné, takže bez funkčného odosielania sa nikto nový nezaregistruje.
+1. Google účet, z ktorého sa bude posielať → **Zabezpečenie → Dvojstupňové overenie** musí byť zapnuté.
+2. <https://myaccount.google.com/apppasswords> → vytvor heslo aplikácie (napr. „Poker Night“) — 16 znakov.
+3. Do `deploy/nas/.env` na NAS doplň (súbor má práva 600, nie je v repozitári):
+   ```
+   GMAIL_USER=tvoja.adresa@gmail.com
+   GMAIL_APP_PASSWORD=abcdefghijklmnop
+   ```
+4. `deploy/nas/deploy.sh` (alebo na NAS `docker compose -f deploy/nas/docker-compose.yml up -d mailer poker`).
+   Stav: `docker logs poker-mailer` (bez údajov vypíše „Gmail nie je nastavený“). Gmail povolí okolo 500 e-mailov denne.
+
+`PUBLIC_URL` (adresa v odkazoch) doplní `ensure-env.sh` z domény Tailscale. Pri každom nasadení sa celý volume s dátami
+zálohuje do `<dir>/backups/poker-data-<dátum>.tgz` (posledných 10).
+
 ## Ochrana pred zahltením (server, `server/limits.ts`, dá sa meniť cez `LIMIT_*`)
 | Limit | Predvolene |
 | --- | --- |
@@ -46,6 +63,10 @@ hráči pri stole (HMAC z `TURN_SECRET`, platnosť 24 h). `TURN_SECRET` a `TURN_
 | Čakajúce žiadosti o prístup | 10 na stôl, 3 z jednej IP; platnosť 15 min, po zamietnutí 5 min pauza |
 | Členovia jedného stola / transakcie | 40 / 5000 |
 | Nepoužitý stôl (bez hry, len zakladateľ) | zmaže sa po 24 h bez aktivity |
+| Registrácia (pokusy) | 30 / hod na IP |
+| Nesprávne heslo | 20 na IP a 10 na účet za 15 min |
+| Zabudnuté heslo | 5 / hod na IP, 3 / hod na účet |
+| Overovacie e-maily / fotky | 3 / hod / 20 / hod na účet |
 
 Cudzie webstránky sa k hre pripojiť nemôžu (kontrola `Origin`), takže útočník nevie zneužiť prehliadače svojich návštevníkov.
 

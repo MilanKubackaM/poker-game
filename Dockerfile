@@ -18,7 +18,7 @@ ENV NODE_ENV=production \
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
-RUN mkdir -p /app/data && chown node:node /app/data
+RUN mkdir -p /app/data /app/outbox && chown node:node /app/data /app/outbox && chmod 700 /app/outbox
 EXPOSE 3000 3443
 USER node
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s CMD wget -qO- http://127.0.0.1:3000/api/health || exit 1

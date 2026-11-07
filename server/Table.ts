@@ -25,6 +25,8 @@ const PIGGY_SHORT_ERROR = 'Nemáš dosť žetónov na vstup do prasiatka — po�
 const KICK_NOTE = 'Vyhodenie hostom';
 const SESSION_EXPIRED = 'Relácia vypršala';
 const TABLE_FULL_ON_RETURN = 'Stôl je plný — počkaj, kým sa uvoľní miesto';
+const ALREADY_MEMBER = 'Pri tomto stole už máš miesto';
+export const SEAT_OF_OTHER_ACCOUNT = 'Toto miesto už patrí inému účtu';
 const GAME_MODES: GameMode[] = ['omaha', 'pineapple', 'seven-deuce', 'piggy'];
 const MODE_LABELS: Record<GameMode, string> = {
   omaha: VARIANT_LABELS.omaha,
@@ -37,6 +39,8 @@ const SETTINGS_KEYS: (keyof TableSettings)[] = ['name', 'currency', 'smallBlind'
 export interface TablePlayer {
   id: string;
   token: string;
+  /** Účet hráča (v1.2.0); null = miesto spred účtov (archív, kým ho niekto neprevezme) alebo hráč z testov. */
+  userId: string | null;
   name: string;
   avatar: Avatar;
   seat: number;
@@ -77,6 +81,8 @@ export interface JoinRequest {
   id: string;
   /** Tajomstvo žiadateľa — návrat k žiadosti po obnovení stránky. */
   token: string;
+  /** Účet žiadateľa — jeden účet má pri stole najviac jednu žiadosť. */
+  userId: string | null;
   name: string;
   avatar: Avatar;
   at: number;
@@ -108,6 +114,8 @@ export interface DrawState {
 /** Štatistiky hráča pre leaderboard — držia sa aj po jeho odchode od stola. */
 export interface PlayerRecord {
   id: string;
+  /** Účet hráča — štatistiky vyhodeného hráča (už nie je členom) sa tak stále započítajú do jeho účtu. */
+  userId?: string | null;
   name: string;
   avatar: Avatar;
   handsPlayed: number;
@@ -118,6 +126,8 @@ export interface PlayerRecord {
 export interface PersistedPlayer {
   id: string;
   token: string;
+  /** Staršie súbory (v1.1.0) ho nemajú → null. */
+  userId?: string | null;
   name: string;
   avatar: Avatar;
   seat: number;
@@ -190,6 +200,10 @@ export const SNAPSHOT_VERSION = 1;
 export interface TableSnapshot {
   version: typeof SNAPSHOT_VERSION;
   code: string;
+  /** Stôl z éry účtov (v1.2.0+). Súbor bez tohto poľa je stôl spred účtov → archív len na čítanie. */
+  accounts?: true;
+  /** Archivovaný stôl spred účtov (uloží sa po prevzatí miesta do účtu) — nikdy sa nehrá ani neexpiruje. */
+  archived?: boolean;
   createdAt: number;
   lastActivity: number;
   settings: TableSettings;
@@ -259,6 +273,8 @@ const DRAW_SLOTS = 52;
 
 export class Table {
   readonly code: string;
+  /** Stôl spred účtov — len na čítanie (SessionManager ho drží mimo hrateľných stolov, bez časovačov). */
+  archived = false;
   /** Zakladateľ (vlastník) stola — jeho práva hosta sa nedajú odobrať. */
   hostId = '';
   readonly adminIds = new Set<string>();
@@ -353,7 +369,10 @@ export class Table {
     return this.handNumber === 0 && this.players.size + this.departed.size <= 1;
   }
 
-  addPlayer(name: string, avatar: Avatar): Result<TablePlayer> {
+  addPlayer(name: string, avatar: Avatar, userId: string | null = null): Result<TablePlayer> {
+    if (userId !== null && this.memberByUser(userId)) {
+      return { ok: false, error: ALREADY_MEMBER };
+    }
     if (this.players.size + this.departed.size >= LIMITS.maxMembersPerTable) {
       return { ok: false, error: 'Stôl má už priveľa členov — host môže vyhodiť tých, ktorí sa nevrátia' };
     }
@@ -364,6 +383,7 @@ export class Table {
     const player: TablePlayer = {
       id: randomUUID(),
       token: randomBytes(24).toString('hex'),
+      userId,
       name,
       avatar,
       seat,
@@ -382,7 +402,7 @@ export class Table {
       microphone: false,
     };
     this.players.set(player.id, player);
-    this.records.set(player.id, { id: player.id, name, avatar, handsPlayed: 0, handsWon: 0, biggestPot: 0 });
+    this.records.set(player.id, { id: player.id, userId, name, avatar, handsPlayed: 0, handsWon: 0, biggestPot: 0 });
     if (!this.hostId) {
       this.hostId = player.id;
       this.adminIds.add(player.id);
@@ -399,7 +419,13 @@ export class Table {
    * Nový hráč sa k stolu nedostane hneď: vznikne žiadosť, ktorú musí schváliť host (zakladateľ alebo hráč s právami hosta).
    * Žiadateľ medzitým nevidí nič zo stola; členovia vidia len jeho meno a avatara.
    */
-  requestJoin(name: string, avatar: Avatar, ip: string): Result<JoinRequest> {
+  requestJoin(name: string, avatar: Avatar, ip: string, userId: string | null = null): Result<JoinRequest> {
+    if (userId !== null && this.memberByUser(userId)) {
+      return { ok: false, error: ALREADY_MEMBER };
+    }
+    if (userId !== null && this.joinRequestByUser(userId)) {
+      return { ok: false, error: 'Žiadosť o prístup ku stolu už čaká na schválenie' };
+    }
     if (this.players.size + this.departed.size >= LIMITS.maxMembersPerTable) {
       return { ok: false, error: 'Stôl má už priveľa členov — host môže vyhodiť tých, ktorí sa nevrátia' };
     }
@@ -412,12 +438,31 @@ export class Table {
     if ([...this.joinRequests.values()].filter((request) => request.ip === ip).length >= LIMITS.joinRequestsPerIp) {
       return { ok: false, error: 'Z tvojej siete už čakajú žiadosti — počkaj, kým ich host vybaví' };
     }
-    const request: JoinRequest = { id: randomUUID(), token: randomBytes(24).toString('hex'), name, avatar, at: Date.now(), ip, sockets: new Set() };
+    const request: JoinRequest = { id: randomUUID(), token: randomBytes(24).toString('hex'), userId, name, avatar, at: Date.now(), ip, sockets: new Set() };
     this.joinRequests.set(request.id, request);
     this.event('info', `${name} žiada o prístup ku stolu — čaká na schválenie hostom`);
     this.armJoinTimer();
     this.changed();
     return { ok: true, data: request };
+  }
+
+  /** Čakajúca žiadosť účtu `userId` (jeden účet má pri stole najviac jednu). */
+  joinRequestByUser(userId: string): JoinRequest | undefined {
+    return [...this.joinRequests.values()].find((request) => request.userId === userId);
+  }
+
+  /** Účet sa stal členom inou cestou (napr. z iného zariadenia) — jeho čakajúce žiadosti sú zbytočné, zatvoria sa potichu. */
+  closeJoinsOfUser(userId: string): void {
+    let closed = false;
+    for (const request of [...this.joinRequests.values()]) {
+      if (request.userId === userId) {
+        this.closeJoin(request, 'cancelled', null, null);
+        closed = true;
+      }
+    }
+    if (closed) {
+      this.changed();
+    }
   }
 
   /** Čakajúca žiadosť, ak sedí token žiadateľa. */
@@ -460,13 +505,19 @@ export class Table {
     if (!request) {
       return { ok: false, error: 'Žiadosť už neplatí' };
     }
+    if (approve && request.userId !== null && this.memberByUser(request.userId)) {
+      // Žiadateľ medzitým prišiel ku stolu ako člen (iné zariadenie) — druhé miesto pre ten istý účet nevznikne.
+      this.closeJoin(request, 'cancelled', null, null);
+      this.changed();
+      return { ok: false, error: ALREADY_MEMBER };
+    }
     if (!approve) {
       this.closeJoin(request, 'rejected', null, actor.name);
       this.event('host', `${actor.name} zamieta žiadosť hráča ${request.name}`);
       this.changed();
       return { ok: true, data: null };
     }
-    const added = this.addPlayer(request.name, request.avatar);
+    const added = this.addPlayer(request.name, request.avatar, request.userId);
     if (!added.ok || !added.data) {
       return { ok: false, error: added.ok ? 'Hráča sa nepodarilo pridať' : added.error };
     }
@@ -540,6 +591,46 @@ export class Table {
     return this.players.get(playerId) ?? this.departed.get(playerId);
   }
 
+  /** Člen stola (sediaci alebo ten, kto odišiel) patriaci účtu `userId`; vyhodený hráč už nie. */
+  memberByUser(userId: string): TablePlayer | undefined {
+    for (const player of [...this.players.values(), ...this.departed.values()]) {
+      if (player.userId === userId && !isKicked(player)) {
+        return player;
+      }
+    }
+    return undefined;
+  }
+
+  /** Všetky miesta pri stole patriace účtu (prevzatý archív môže mať niekoľko starých miest toho istého človeka). */
+  membersOfUser(userId: string): TablePlayer[] {
+    return [...this.players.values(), ...this.departed.values()].filter((player) => player.userId === userId && !isKicked(player));
+  }
+
+  /**
+   * Prevzatie miesta spred účtov do účtu (archív): dôkazom je token miesta z prehliadača. Miesto, ktoré už patrí
+   * inému účtu, sa prevziať nedá; to isté miesto znova do toho istého účtu je v poriadku.
+   */
+  claimSeat(playerId: unknown, token: unknown, userId: string): Result<TablePlayer> {
+    if (typeof playerId !== 'string' || !this.hasMembership(playerId, token)) {
+      return { ok: false, error: 'Miesto pri stole sa nenašlo' };
+    }
+    const player = this.member(playerId)!;
+    if (player.userId !== null && player.userId !== userId) {
+      return { ok: false, error: SEAT_OF_OTHER_ACCOUNT };
+    }
+    player.userId = userId;
+    const record = this.records.get(player.id);
+    if (record) {
+      record.userId = userId;
+    }
+    return { ok: true, data: player };
+  }
+
+  /** Počet dohraných rúk (archív, prehľady). */
+  handsDealt(): number {
+    return this.handNumber;
+  }
+
   /** Platí token pre „Moje stoly“ a návrat? Vyhodený hráč (aj počas dohrávanej ruky) už nie. */
   hasMembership(playerId: string, token: unknown): boolean {
     const player = this.member(playerId);
@@ -555,7 +646,20 @@ export class Table {
     if (typeof playerId !== 'string' || !this.hasMembership(playerId, token)) {
       return { ok: false, error: SESSION_EXPIRED };
     }
-    const seated = this.players.get(playerId);
+    return this.resumeMember(this.member(playerId)!, standing);
+  }
+
+  /** Návrat člena podľa účtu (prihlásený používateľ nepotrebuje token miesta). */
+  resumeByUser(userId: string, standing = false): Result<TablePlayer> {
+    const member = this.memberByUser(userId);
+    if (!member) {
+      return { ok: false, error: SESSION_EXPIRED };
+    }
+    return this.resumeMember(member, standing);
+  }
+
+  private resumeMember(member: TablePlayer, standing: boolean): Result<TablePlayer> {
+    const seated = this.players.get(member.id);
     if (seated) {
       if (seated.leaving) {
         seated.leaving = false;
@@ -570,7 +674,6 @@ export class Table {
       }
       return { ok: true, data: seated };
     }
-    const member = this.departed.get(playerId)!;
     const taken = new Set([...this.players.values()].map((player) => player.seat));
     const seat = taken.has(member.seat) ? this.freeSeat() : member.seat;
     if (seat === null) {
@@ -634,6 +737,50 @@ export class Table {
       this.syncIntro();
     }
     this.changed();
+  }
+
+  /**
+   * Hráč sa pripojil z ďalšieho zariadenia: nové spojenie sa pripojí (hráč nebude ani na chvíľu offline) a všetky
+   * ostatné sa od stola odpoja. Kamera a mikrofón patria zariadeniu, takže sa vypnú. Vráti id odpojených spojení.
+   */
+  takeOver(player: TablePlayer, socketId: string): string[] {
+    const others = [...player.sockets].filter((id) => id !== socketId);
+    if (!player.sockets.has(socketId)) {
+      this.attachSocket(player, socketId);
+    }
+    if (others.length === 0) {
+      return [];
+    }
+    for (const id of others) {
+      player.sockets.delete(id);
+    }
+    player.camera = false;
+    player.microphone = false;
+    this.lastActivity = Date.now();
+    this.changed();
+    return others;
+  }
+
+  /**
+   * Zmena profilu účtu (meno, avatar, fotka) pri všetkých miestach účtu — aj v štatistikách vyhodeného hráča.
+   * Minulé zápisy v ledgeri a histórii si nechávajú pôvodné meno. Vráti, či sa niečo zmenilo.
+   */
+  applyAccountProfile(userId: string, name: string, avatar: Avatar): boolean {
+    let changed = false;
+    for (const member of this.membersOfUser(userId)) {
+      if (member.name !== name || !sameAvatar(member.avatar, avatar)) {
+        this.updateProfile(member, { name, avatar: { ...avatar } });
+        changed = true;
+      }
+    }
+    for (const record of this.records.values()) {
+      if (record.userId === userId && !this.member(record.id) && (record.name !== name || !sameAvatar(record.avatar, avatar))) {
+        record.name = name;
+        record.avatar = { ...avatar };
+        changed = true;
+      }
+    }
+    return changed;
   }
 
   updateProfile(player: TablePlayer, patch: { name?: string; avatar?: Avatar; camera?: boolean; microphone?: boolean }): void {
@@ -1677,6 +1824,7 @@ export class Table {
       hostName: this.member(this.hostId)?.name ?? this.records.get(this.hostId)?.name ?? '',
       myStack: me ? this.visibleStack(me) + me.pendingChips : 0,
       myIsAdmin: this.isAdmin(playerId),
+      ...(me && (!this.players.has(me.id) || me.leaving) ? { left: true } : {}),
       createdAt: this.createdAt,
       lastActivity: this.lastActivity,
     };
@@ -3457,6 +3605,7 @@ export class Table {
     return {
       version: SNAPSHOT_VERSION,
       code: this.code,
+      ...(this.archived ? { archived: true } : { accounts: true as const }),
       createdAt: this.createdAt,
       lastActivity: this.lastActivity,
       settings: { ...this.settings },
@@ -3475,6 +3624,7 @@ export class Table {
         return {
           id: player.id,
           token: player.token,
+          userId: player.userId,
           name: player.name,
           avatar: player.avatar,
           seat: player.seat,
@@ -3520,6 +3670,7 @@ export class Table {
       departed: [...this.departed.values()].map((member) => ({
         id: member.id,
         token: member.token,
+        userId: member.userId,
         name: member.name,
         avatar: member.avatar,
         seat: member.seat,
@@ -3543,10 +3694,12 @@ export class Table {
    * Obnoví stôl po reštarte servera. Všetci sú odpojení; rozohraná ruka sa ruší (hráči majú stack spred nej
    * + čakajúce žetóny), losovanie o button sa ruší (návrat do čakárne), bežiaca hra je pozastavená.
    */
-  static fromSnapshot(snapshot: TableSnapshot, hooks: TableHooks, options: TableOptions = {}): Table {
+  /** `archived` = stôl spred účtov len na čítanie: obnoví sa stav na prezeranie, bez hlášok o reštarte a bez hry. */
+  static fromSnapshot(snapshot: TableSnapshot, hooks: TableHooks, options: TableOptions = {}, archived = false): Table {
     // Základný čas na ťah je pevný — aj staršie uložené stoly (napr. so 60 s) dostanú aktuálnu hodnotu.
     const { startingStack: _legacyStartingStack, ...savedSettings } = snapshot.settings as TableSettings & { startingStack?: number };
     const table = new Table(snapshot.code, { ...DEFAULT_SETTINGS, ...savedSettings, actionTimeoutSec: DEFAULT_SETTINGS.actionTimeoutSec }, hooks, options);
+    table.archived = archived;
     table.createdAt = snapshot.createdAt;
     table.lastActivity = snapshot.lastActivity;
     table.hostId = snapshot.hostId;
@@ -3569,7 +3722,7 @@ export class Table {
     table.holeHistory.push(...(snapshot.holeHistory ?? []).filter((hand) => Number.isInteger(hand?.handNumber) && !!hand.players && typeof hand.players === 'object').slice(-MAX_HISTORY_HANDS));
     table.fair.restore(snapshot.fair);
     for (const record of snapshot.records) {
-      table.records.set(record.id, { ...record });
+      table.records.set(record.id, { ...record, userId: typeof record.userId === 'string' ? record.userId : null });
     }
     const savedPiggy = snapshot.piggy;
     if (savedPiggy && Number.isInteger(savedPiggy.amount) && Number.isInteger(savedPiggy.entry) && savedPiggy.entry > 0) {
@@ -3594,6 +3747,7 @@ export class Table {
     for (const saved of snapshot.players) {
       const player: TablePlayer = {
         ...saved,
+        userId: typeof saved.userId === 'string' ? saved.userId : null,
         stack: saved.stack + saved.pendingChips,
         pendingChips: 0,
         sittingOut: saved.sittingOut,
@@ -3630,6 +3784,7 @@ export class Table {
       }
       table.departed.set(saved.id, {
         ...saved,
+        userId: typeof saved.userId === 'string' ? saved.userId : null,
         stack: saved.stack + saved.pendingChips,
         pendingChips: 0,
         sittingOut: true,
@@ -3664,6 +3819,10 @@ export class Table {
       if (player.sittingOut && player.returnMode === null && player.stack > 0 && player.stack <= piggyEntry) {
         table.piggyShort.add(player.id);
       }
+    }
+    if (archived) {
+      // Archív sa nehrá: ostáva v čakárni, bez hlášok o reštarte (jeho udalosti sa nemenia).
+      return table;
     }
     if (snapshot.phase === 'playing' && !snapshot.returnToLobbyPending) {
       table.phase = 'playing';
@@ -3714,6 +3873,10 @@ function mergeRows<T extends { playerId: string; playerName: string; amount: num
     }
   }
   return merged;
+}
+
+function sameAvatar(left: Avatar, right: Avatar): boolean {
+  return left.emoji === right.emoji && left.color === right.color && (left.photo ?? null) === (right.photo ?? null);
 }
 
 /** Vyhodený hostom (aj staršie uložené súbory) — na rozdiel od dobrovoľného odchodu ide o cash-out a token neplatí. */

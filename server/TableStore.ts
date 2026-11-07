@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { SNAPSHOT_VERSION, type TableSnapshot } from './Table';
 
@@ -39,6 +39,27 @@ export class TableStore {
     const tmp = `${target}.tmp`;
     writeFileSync(tmp, JSON.stringify(snapshot));
     renameSync(tmp, target);
+  }
+
+  /**
+   * Skopíruje pôvodné súbory stolov do `targetDir` — len ak ešte neexistuje (záloha sa nikdy neprepíše novšími dátami).
+   * Vráti, či zálohu vytvoril.
+   */
+  backup(targetDir: string): boolean {
+    if (existsSync(targetDir)) {
+      return false;
+    }
+    const tmp = `${targetDir}.tmp`;
+    rmSync(tmp, { recursive: true, force: true });
+    mkdirSync(tmp, { recursive: true });
+    for (const file of readdirSync(this.dir)) {
+      if (file.endsWith('.json') && CODE_PATTERN.test(file.slice(0, -'.json'.length))) {
+        copyFileSync(path.join(this.dir, file), path.join(tmp, file));
+      }
+    }
+    // Celý priečinok naraz — prerušená záloha nezostane ako „hotová“.
+    renameSync(tmp, targetDir);
+    return true;
   }
 
   remove(code: string): void {

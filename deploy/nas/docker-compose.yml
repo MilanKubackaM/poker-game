@@ -35,9 +35,15 @@ services:
       TURN_USAGE_FILE: /app/turn-creds/usage.json
       # Kľúč k stránke /stats (sieťové štatistiky) — vytvorí ho deploy.sh
       STATS_TOKEN: "${STATS_TOKEN:-}"
+      # Verejná adresa hry pre odkazy v e-mailoch (overenie e-mailu, obnovenie hesla) — doplní ensure-env.sh
+      PUBLIC_URL: "${PUBLIC_URL:-}"
+      # E-maily hra len zapíše do outboxu; odošle ich sidecar „mailer“ (hra nemá prístup na internet ani k heslu Gmailu)
+      MAIL_OUTBOX_DIR: /app/outbox
+      MAIL_FROM: "Poker Night <${GMAIL_USER:-}>"
     volumes:
       - poker-data:/app/data
       - turn-creds:/app/turn-creds:ro
+      - mail-outbox:/app/outbox
     networks: [poker-internal]
     logging:
       driver: json-file
@@ -169,6 +175,64 @@ services:
       driver: json-file
       options: { max-size: "1m", max-file: "2" }
 
+  # Odosielanie e-mailov (overenie e-mailu, obnovenie hesla) cez Gmail SMTP s App Password. Hra zapíše správu do outboxu
+  # (<id>.rcpt = príjemca, <id>.eml = celá správa), tento kontajner ju odošle a zmaže. Heslo Gmailu vidí len on.
+  # GMAIL_USER a GMAIL_APP_PASSWORD sú len v deploy/nas/.env na NAS (Google účet → Zabezpečenie → Heslá aplikácií).
+  mailer:
+    image: curlimages/curl:8.11.1
+    container_name: poker-mailer
+    restart: unless-stopped
+    # rovnaký používateľ ako hra — súbory v outboxe patria jemu (volume vznikne s právami priečinka z image hry)
+    user: "1000:1000"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 32m
+    pids_limit: 16
+    depends_on: [poker]
+    environment:
+      GMAIL_USER: "${GMAIL_USER:-}"
+      GMAIL_APP_PASSWORD: "${GMAIL_APP_PASSWORD:-}"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ -z "$$GMAIL_USER" ] || [ -z "$$GMAIL_APP_PASSWORD" ]; then
+          echo "Gmail nie je nastavený (GMAIL_USER, GMAIL_APP_PASSWORD v .env) — e-maily ostávajú v outboxe a neodídu"
+          while true; do sleep 86400; done
+        fi
+        echo "Mailer: odosielam cez smtp.gmail.com ako $$GMAIL_USER"
+        while true; do
+          for EML in /outbox/*.eml; do
+            [ -e "$$EML" ] || continue
+            BASE="$${EML%.eml}"; ID="$$(basename "$$BASE")"
+            RCPT="$$(head -n 1 "$$BASE.rcpt" 2>/dev/null | tr -d '\r\n')"
+            if ! printf '%s' "$$RCPT" | grep -Eq '^[^[:space:]<>"@]+@[^[:space:]<>"@]+$$'; then
+              echo "Mailer: $$ID nemá platného príjemcu — zahadzujem"
+              rm -f "$$EML" "$$BASE.rcpt"
+              continue
+            fi
+            if curl -sS --max-time 30 --ssl-reqd --url "smtps://smtp.gmail.com:465" \
+              --user "$$GMAIL_USER:$$GMAIL_APP_PASSWORD" --mail-from "$$GMAIL_USER" --mail-rcpt "$$RCPT" \
+              --upload-file "$$EML"; then
+              echo "Mailer: $$ID odoslaný"
+              rm -f "$$EML" "$$BASE.rcpt"
+            elif [ -n "$$(find "$$EML" -mmin +1440 2>/dev/null)" ]; then
+              echo "Mailer: $$ID sa nepodarilo odoslať ani za 24 h — zahadzujem"
+              rm -f "$$EML" "$$BASE.rcpt"
+            else
+              echo "Mailer: $$ID sa nepodarilo odoslať, skúsim znova"
+              sleep 30
+            fi
+          done
+          sleep 3
+        done
+    volumes:
+      - mail-outbox:/outbox
+    networks: [egress]
+    logging:
+      driver: json-file
+      options: { max-size: "1m", max-file: "2" }
+
   tailscale:
     # „stable“ = aktuálna stabilná verzia (bezpečnostné opravy); pri nasadení sa stiahne nová
     image: tailscale/tailscale:stable
@@ -208,3 +272,4 @@ volumes:
   poker-data:
   tailscale-state:
   turn-creds:
+  mail-outbox:

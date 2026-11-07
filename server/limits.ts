@@ -50,6 +50,19 @@ export const LIMITS = {
   maxLedgerEntries: envInt('LIMIT_MAX_LEDGER_ENTRIES', 5000),
   /** Nepoužitý stôl (žiadna ruka, nikto okrem zakladateľa) sa zmaže po tejto dobe bez aktivity. */
   unusedTableRetentionMs: envInt('LIMIT_UNUSED_TABLE_RETENTION_HOURS', 24) * HOUR,
+  /** Účty: pokusy o registráciu z jednej IP za hodinu — celá partia sa registruje z Wi-Fi hostiteľa naraz. */
+  registerPerIpHour: envInt('LIMIT_REGISTER_PER_IP_HOUR', 30),
+  /** Nesprávne heslá (prihlásenie aj overenie hesla pri zmene) z jednej IP / na jeden účet v okne `loginFailureWindowMs`. */
+  loginFailuresPerIp: envInt('LIMIT_LOGIN_FAILURES_PER_IP', 20),
+  loginFailuresPerAccount: envInt('LIMIT_LOGIN_FAILURES_PER_ACCOUNT', 10),
+  loginFailureWindowMs: envInt('LIMIT_LOGIN_FAILURE_WINDOW_MINUTES', 15) * 60 * 1000,
+  /** Zabudnuté heslo z jednej IP / pre jeden účet za hodinu. */
+  forgotPerIpHour: envInt('LIMIT_FORGOT_PER_IP_HOUR', 5),
+  forgotPerAccountHour: envInt('LIMIT_FORGOT_PER_ACCOUNT_HOUR', 3),
+  /** Overovacie e-maily jedného účtu za hodinu (opätovné odoslanie aj zmena e-mailu). */
+  verifyMailsPerAccountHour: envInt('LIMIT_VERIFY_MAILS_PER_ACCOUNT_HOUR', 3),
+  /** Nahraté profilové fotky jedného účtu za hodinu. */
+  photoUploadsPerAccountHour: envInt('LIMIT_PHOTO_UPLOADS_PER_ACCOUNT_HOUR', 20),
 } as const;
 
 export const WINDOWS = { MINUTE: 60 * 1000, HOUR, DAY } as const;

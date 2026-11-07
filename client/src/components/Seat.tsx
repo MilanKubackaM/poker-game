@@ -8,6 +8,7 @@ import { RoleBadge, type PlayerRoles } from './HostPlayers';
 import { MicIcon } from './MicIcon';
 import { playerStateLabel } from './PlayerPause';
 import { PlayingCard } from './PlayingCard';
+import { AvatarFace } from './AvatarPicker';
 import { VideoTile } from './VideoTile';
 
 export interface SeatPosition {
@@ -122,7 +123,7 @@ export function Seat(props: SeatProps) {
           </span>
         )}
         <div className="seat-portrait" style={{ background: player.avatar.color }}>
-          {showVideo ? <VideoTile stream={stream} mirrored={isMe} /> : <span className="seat-emoji">{player.avatar.emoji}</span>}
+          {showVideo ? <VideoTile stream={stream} mirrored={isMe} /> : <AvatarFace avatar={player.avatar} emojiClassName="seat-emoji" />}
         </div>
         {speaking ? (
           <span className="seat-speaking-mic" title="Práve hovorí">

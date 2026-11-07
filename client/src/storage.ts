@@ -1,31 +1,13 @@
-import type { Avatar } from '../../shared/types';
-import { ACCEPTED_AVATAR_EMOJIS, AVATAR_COLORS, AVATAR_EMOJIS } from '../../shared/constants';
+import type { DeviceSeat } from '../../shared/account';
 
-const PROFILE_KEY = 'poker-night:profile';
+/** Miesta pri stoloch z čias pred účtami (v1.1.0 a staršie) — dnes slúžia len ako dôkaz pre archív (`deviceSeats`). */
 const SESSION_PREFIX = 'poker-night:session:';
-/** Index stolov, ktoré som v tomto prehliadači založil alebo ku ktorým som si prisadol: kód → posledné otvorenie. */
-const TABLES_KEY = 'poker-night:tables';
 /** Čakajúca žiadosť o prístup ku stolu (kým ju host neschváli) — prežije obnovenie stránky. */
 const PENDING_PREFIX = 'poker-night:pending:';
-
-export interface Profile {
-  name: string;
-  avatar: Avatar;
-}
-
-export interface StoredSession {
-  playerId: string;
-  token: string;
-}
-
-export interface SavedTable extends StoredSession {
-  code: string;
-  lastOpened: number;
-  /** Kedy som od stola odišiel cez „Odísť od stola“ (účet a žetóny ostali pri stole); null = sedím pri ňom. */
-  leftAt: number | null;
-}
-
-type TableIndex = Record<string, { lastOpened: number; leftAt?: number }>;
+/** Pozvánka ku stolu otvorená pred prihlásením — po prihlásení / overení e-mailu (aj v inej karte) sa ku stolu pokračuje. */
+const INVITE_KEY = 'poker-night:invite';
+/** Ako dlho si pozvánku pamätáme (pokrýva aj platnosť overovacieho odkazu). */
+const INVITE_TTL_MS = 48 * 60 * 60 * 1000;
 
 function read<T>(key: string): T | null {
   try {
@@ -48,20 +30,6 @@ function write(key: string, value: unknown): void {
   }
 }
 
-export function loadProfile(): Profile {
-  const stored = read<Profile>(PROFILE_KEY);
-  if (stored?.name && stored.avatar && ACCEPTED_AVATAR_EMOJIS.includes(stored.avatar.emoji) && AVATAR_COLORS.includes(stored.avatar.color)) {
-    return stored;
-  }
-  return {
-    name: '',
-    avatar: {
-      emoji: AVATAR_EMOJIS[Math.floor(Math.random() * AVATAR_EMOJIS.length)],
-      color: AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)],
-    },
-  };
-}
-
 export interface StoredPendingJoin {
   requestId: string;
   token: string;
@@ -76,77 +44,43 @@ export function savePendingJoin(code: string, pending: StoredPendingJoin | null)
   write(PENDING_PREFIX + code.toUpperCase(), pending);
 }
 
-export function saveProfile(profile: Profile): void {
-  write(PROFILE_KEY, profile);
-}
-
-function isSession(value: unknown): value is StoredSession {
-  const session = value as Partial<StoredSession> | null;
+function isSeat(value: unknown): value is { playerId: string; token: string } {
+  const session = value as { playerId?: unknown; token?: unknown } | null;
   return !!session && typeof session.playerId === 'string' && typeof session.token === 'string';
 }
 
-/** Načíta index; pri prvom spustení ho postaví zo starších kľúčov `poker-night:session:*` (bez známeho času otvorenia). */
-function loadIndex(): TableIndex {
-  const stored = read<TableIndex>(TABLES_KEY);
-  if (stored && typeof stored === 'object') {
-    return stored;
-  }
-  const index: TableIndex = {};
+/** Všetky staré miesta pri stoloch uložené v tomto prehliadači (len na čítanie — nové stoly patria účtu). */
+export function listSavedTables(): DeviceSeat[] {
+  const seats: DeviceSeat[] = [];
   try {
     for (let position = 0; position < localStorage.length; position += 1) {
       const key = localStorage.key(position);
-      if (key?.startsWith(SESSION_PREFIX) && isSession(read(key))) {
-        index[key.slice(SESSION_PREFIX.length).toUpperCase()] = { lastOpened: 0 };
+      if (!key?.startsWith(SESSION_PREFIX)) {
+        continue;
+      }
+      const session = read<unknown>(key);
+      if (isSeat(session)) {
+        seats.push({ code: key.slice(SESSION_PREFIX.length).toUpperCase(), playerId: session.playerId, token: session.token });
       }
     }
   } catch {
-    return index;
+    return seats;
   }
-  write(TABLES_KEY, index);
-  return index;
+  return seats;
 }
 
-export function loadSession(code: string): StoredSession | null {
-  const session = read<StoredSession>(SESSION_PREFIX + code.toUpperCase());
-  return isSession(session) ? session : null;
+export function rememberInvite(code: string): void {
+  write(INVITE_KEY, { code: code.toUpperCase(), at: Date.now() });
 }
 
-/** Uloží prihlásenie ku stolu a zapíše stôl do „Moje stoly“; `null` stôl zabudne. */
-export function saveSession(code: string, session: StoredSession | null): void {
-  const key = code.toUpperCase();
-  write(SESSION_PREFIX + key, session);
-  const index = loadIndex();
-  if (session) {
-    index[key] = { lastOpened: Date.now() };
-  } else {
-    delete index[key];
+/** Zapamätaná pozvánka (a zabudne ju), alebo null. */
+export function takeRememberedInvite(): string | null {
+  const stored = read<{ code?: unknown; at?: unknown }>(INVITE_KEY);
+  write(INVITE_KEY, null);
+  if (!stored || typeof stored.code !== 'string' || typeof stored.at !== 'number' || Date.now() - stored.at > INVITE_TTL_MS) {
+    return null;
   }
-  write(TABLES_KEY, index);
-}
-
-/** Zapamätá si, že som od stola dobrovoľne odišiel — token ostáva, stôl ostáva v „Moje stoly“ (návrat cez `table:resume`). */
-export function markTableLeft(code: string): void {
-  const key = code.toUpperCase();
-  if (!loadSession(key)) {
-    return;
-  }
-  const index = loadIndex();
-  const now = Date.now();
-  index[key] = { lastOpened: now, leftAt: now };
-  write(TABLES_KEY, index);
-}
-
-/** Uložené stoly, naposledy otvorené prvé. */
-export function listSavedTables(): SavedTable[] {
-  const index = loadIndex();
-  const tables: SavedTable[] = [];
-  for (const [code, meta] of Object.entries(index)) {
-    const session = loadSession(code);
-    if (session) {
-      tables.push({ code, lastOpened: meta?.lastOpened ?? 0, leftAt: typeof meta?.leftAt === 'number' ? meta.leftAt : null, ...session });
-    }
-  }
-  return tables.sort((left, right) => right.lastOpened - left.lastOpened);
+  return /^[A-Z0-9]{4,8}$/.test(stored.code) ? stored.code : null;
 }
 
 const ROOM_VIEW_PREFIX = 'poker-night:room-view:';

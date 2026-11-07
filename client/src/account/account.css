@@ -1,0 +1,412 @@
+/* ===== Účet: prihlásenie, registrácia, overenie e-mailu, profil (v1.2.0) ===== */
+
+.auth-screen {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 32px 16px 48px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+}
+
+.auth-panel {
+  gap: 16px;
+}
+
+.auth-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--line);
+}
+
+.auth-tab {
+  /* Šírka podľa textu — pri rovnakých tretinách sa „Zabudnuté heslo“ orezávalo aj na desktope. */
+  flex: 1 1 auto;
+  min-width: 0;
+  background: none;
+  border: 0;
+  padding: 9px 8px;
+  border-radius: 9px;
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 650;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.auth-tab.active {
+  background: rgba(232, 194, 110, 0.16);
+  color: var(--gold);
+}
+
+.auth-tab:focus-visible,
+.auth-link:focus-visible,
+.account-chip:focus-visible,
+.password-toggle:focus-visible {
+  outline: 2px solid rgba(232, 194, 110, 0.6);
+  outline-offset: 1px;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  text-align: left;
+  width: 100%;
+}
+
+.auth-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.auth-link {
+  align-self: center;
+  background: none;
+  border: 0;
+  padding: 4px 6px;
+  border-radius: 6px;
+  color: var(--gold);
+  font-size: 0.88rem;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.auth-link:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.field > label {
+  color: var(--muted);
+}
+
+/* Heslo s tlačidlom „Ukázať“ vo vnútri poľa */
+.password-input {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+
+.password-input input {
+  flex: 1;
+  width: 100%;
+  padding-right: 78px;
+}
+
+.password-toggle {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 4px 9px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+/* Overenie e-mailu, odkazy z e-mailov */
+.verify-card {
+  width: 100%;
+  max-width: 440px;
+}
+
+.verify-card p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.verify-icon {
+  font-size: 2.4rem;
+  line-height: 1;
+}
+
+.verify-email {
+  color: var(--gold);
+  overflow-wrap: anywhere;
+}
+
+.verify-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.verify-card .success,
+.verify-card .error {
+  width: 100%;
+  text-align: left;
+}
+
+/* Účet v hlavičke lobby */
+.account-bar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: -8px;
+}
+
+.account-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  padding: 4px 12px 4px 4px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+
+.account-chip:hover {
+  filter: brightness(1.12);
+}
+
+.account-chip-name {
+  font-weight: 650;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-chip-action {
+  color: var(--gold);
+  font-size: 0.8rem;
+  font-weight: 650;
+}
+
+/* Profil */
+.profile-backdrop {
+  align-items: start;
+}
+
+.profile-dialog {
+  width: min(620px, 100%);
+  text-align: left;
+  gap: 16px;
+  margin: auto 0;
+}
+
+.profile-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.profile-head-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.profile-head-text h2,
+.profile-head-text span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-head-text span {
+  font-size: 0.85rem;
+}
+
+.profile-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.profile-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.profile-sections > .profile-section:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.profile-section h3 {
+  font-size: 0.95rem;
+  color: var(--gold);
+}
+
+.profile-section p {
+  margin: 0;
+}
+
+.profile-photo {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.profile-photo-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.profile-row-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.profile-email {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
+}
+
+.badge-verified {
+  background: rgba(46, 163, 107, 0.2);
+  border-color: rgba(46, 163, 107, 0.55);
+  color: #a8f0c9;
+}
+
+.badge-unverified,
+.badge-deleted {
+  background: rgba(214, 69, 69, 0.18);
+  border-color: rgba(214, 69, 69, 0.5);
+  color: #ffc4c4;
+}
+
+.profile-loading {
+  text-align: center;
+  padding: 24px 0;
+  margin: 0;
+}
+
+.profile-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(170px, 100%), 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.profile-stats-grid > div {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  min-width: 0;
+}
+
+.profile-stats-grid dt {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.profile-stats-grid dd {
+  margin: 4px 0 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.stat-positive {
+  color: #7ee2a8;
+}
+
+.stat-negative {
+  color: #ff9c9c;
+}
+
+.profile-table-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.profile-table-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--line);
+}
+
+.profile-table-main,
+.profile-table-numbers {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.profile-table-numbers {
+  align-items: flex-end;
+  text-align: right;
+  font-size: 0.82rem;
+  flex: none;
+}
+
+.profile-table-name {
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-table-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.profile-table-result {
+  font-size: 1rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 520px) {
+  .profile-dialog {
+    padding: 18px 16px;
+  }
+
+  .profile-photo {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .auth-tab {
+    font-size: 0.82rem;
+    padding: 9px 4px;
+  }
+}

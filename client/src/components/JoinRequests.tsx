@@ -1,5 +1,6 @@
 import type { JoinRequestView, TableView } from '../../../shared/types';
 import { isAdmin } from '../roles';
+import { AvatarFace } from './AvatarPicker';
 
 type Resolve = (requestId: string, approve: boolean) => void;
 
@@ -28,7 +29,7 @@ export function JoinRequestsBanner({ view, onResolve }: { view: TableView; onRes
       {requests.map((request) => (
         <div key={request.id} className="join-request">
           <span className="join-request-avatar" style={{ background: request.avatar.color }} aria-hidden>
-            {request.avatar.emoji}
+            <AvatarFace avatar={request.avatar} />
           </span>
           <span className="join-request-text">
             <strong>{request.name}</strong> žiada o prístup ku stolu
@@ -49,7 +50,7 @@ export function PendingPlayerCards({ view, onResolve }: { view: TableView; onRes
         <article key={request.id} className="room-player pending">
           <div className="room-player-top">
             <div className="room-portrait" style={{ background: request.avatar.color }}>
-              <span className="room-emoji">{request.avatar.emoji}</span>
+              <AvatarFace avatar={request.avatar} emojiClassName="room-emoji" />
             </div>
             <div className="room-player-info">
               <div className="room-player-name">

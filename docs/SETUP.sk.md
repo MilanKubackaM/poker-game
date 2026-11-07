@@ -52,6 +52,26 @@ docker compose down -v
 
 Pri vývoji bez Dockera sa ukladá do `./data` (v `.gitignore`); zmažeš ho jednoducho `rm -rf data`.
 
+### Účty hráčov (od v1.2.0)
+
+Hrať sa dá len s účtom. Registrácia: e-mail, hráčske meno (jedinečné, 3–20 znakov, rovnaké pri všetkých stoloch) a heslo
+zadané dvakrát (aspoň 8 znakov). Kým hráč neklikne na odkaz v overovacom e-maile, nemôže založiť stôl ani sa pripojiť.
+Prihlásiť sa dá e-mailom alebo hráčskym menom. V **Profile** sa mení meno, heslo, e-mail, profilová fotka (prehliadač ju
+zmenší na 256 px) a sú tam globálne štatistiky (ruky, výhry, najväčší pot, výsledok zvlášť pre EUR a CZK, zoznam stolov).
+
+- Peniaze sa medzi stolmi neprenášajú — každý stôl má vlastný stack, transakcie a vyúčtovanie ako doteraz.
+- Ten istý účet pri tom istom stole môže byť len na jednom zariadení: keď ho otvorí inde, staré zariadenie sa vráti do
+  lobby. Rôzne stoly na rôznych zariadeniach sú v poriadku.
+- **Zabudnuté heslo** pošle odkaz (platí 1 hodinu) len na overený e-mail. Po zmene hesla sa ostatné zariadenia odhlásia.
+- Účty sú v `DATA_DIR/users.json` (heslá ako `scrypt`, prihlásenia a odkazy len ako SHA-256), fotky v `DATA_DIR/photos/`.
+- **Stoly spred v1.2.0** (anonymní hráči) sa pri prvom štarte zálohujú do `DATA_DIR/backup-v1.1.0/` a ostanú len na
+  čítanie: v **Moje stoly → Archív** ich vidí každý, kto pri nich sedel v tomto prehliadači, a jedným klikom si ich prevezme
+  do účtu (započítajú sa do štatistík a uvidí ich na každom zariadení).
+
+E-maily (overenie, obnovenie hesla) server len zapíše do priečinka `MAIL_OUTBOX_DIR`; na NAS ich odošle sidecar `mailer` cez
+Gmail SMTP (pozri `deploy/nas/README.md`). Bez `MAIL_OUTBOX_DIR` (vývoj, lokálny Docker) sa e-mail aj s odkazom len vypíše
+do logu servera — odkaz z neho skopíruješ do prehliadača.
+
 ## Hra s kamarátmi v rovnakej sieti (LAN / wifi)
 
 1. Zisti IP adresu svojho počítača (macOS: `ipconfig getifaddr en0`), napr. `192.168.1.20`.
@@ -112,7 +132,7 @@ pri nedostupnom serveri ukáže hlásenie „Server je teraz nedostupný“. Iko
 
 ## Ako sa hrá
 
-1. Na úvodnej obrazovke zadaj prezývku, vyber avatara a založ stôl (blindy, variant).
+1. Zaregistruj sa (alebo sa prihlás), over e-mail a na úvodnej obrazovke založ stôl (blindy, variant).
 2. Tlačidlom **🔗 Pozvať** skopíruj odkaz a pošli ho kamarátom.
 3. Keď sú všetci pri stole, otvor **♛ Host** → **Spustiť hru**. Ruky sa rozdávajú automaticky.
 4. Počas hry v **♛ Host → Hra** vyhlásiš špeciálne kolo pre ďalšiu ruku, v **Pravidlá** meníš nastavenia
@@ -146,6 +166,9 @@ Demo obrazovky s ukážkovými dátami (bez servera): `http://localhost:5173/?de
 | `TURN_URLS`, `TURN_SECRET` | – | vlastný coturn relay (dočasné HMAC údaje len pre hráčov pri stole) |
 | `TURN_ICE_FILE` | – | súbor s údajmi Cloudflare TURN (zapisuje sidecar `turn-creds`); má prednosť pred coturnom |
 | `STATS_TOKEN` | – | kľúč k stránke `/stats`; bez neho je v produkcii vypnutá, pri vývoji otvorená |
+| `PUBLIC_URL` | `http://localhost:5173` | verejná adresa hry pre odkazy v e-mailoch (overenie, obnovenie hesla) |
+| `MAIL_OUTBOX_DIR` | – | priečinok, kam server zapíše e-maily pre odosielací sidecar; bez neho sa e-maily len vypíšu do logu |
+| `MAIL_FROM` | – | hlavička odosielateľa, napr. `Poker Night <hra@gmail.com>` (pri Gmaile musí sedieť s `GMAIL_USER`) |
 
 ## Sieťové štatistiky (`/stats`)
 

@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import type { Card, DealerChoice, DrawView, SeatPlayerView } from '../../../shared/types';
 import { DRAW_PICK_TIMEOUT_SEC, DRAW_SUIT_ORDER, SUIT_SYMBOLS } from '../../../shared/constants';
-import { AvatarBadge } from './AvatarPicker';
+import { AvatarBadge, AvatarInline } from './AvatarPicker';
 import { PlayingCard } from './PlayingCard';
 
 const SLOT_COUNT = 52;
@@ -139,7 +139,7 @@ export function DrawField({ draw, players, canPick, onPick }: DrawFieldProps) {
             />
             {slot.card && drawer && (
               <span className="draw-tag" style={{ borderColor: drawer.avatar.color }}>
-                {drawer.avatar.emoji} {drawer.name}
+                <AvatarInline avatar={drawer.avatar} /> {drawer.name}
               </span>
             )}
           </div>

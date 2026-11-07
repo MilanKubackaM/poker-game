@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { Currency, HandHistoryEntry, LeaderboardRow, LedgerEntry, SeatPlayerView, TableEvent } from '../../../shared/types';
 import { MAX_CHAT_LENGTH } from '../../../shared/constants';
+import { AvatarInline } from './AvatarPicker';
 import { Cashout } from './Cashout';
 import { HistoryPanel, Leaderboard, type StatsCashout } from './Stats';
 import { TransactionsTab } from './TransactionsTab';
@@ -111,7 +112,7 @@ export function SidePanel({ events, players, ledger, currency, onSend, onClose, 
                 return (
                   <div key={event.id} className="chat-line">
                     <span className="chat-author" style={{ color: author?.avatar.color }}>
-                      {author?.avatar.emoji} {author?.name ?? 'Hráč'}
+                      {author && <AvatarInline avatar={author.avatar} />} {author?.name ?? 'Hráč'}
                     </span>
                     <span className="chat-text">{event.text}</span>
                   </div>

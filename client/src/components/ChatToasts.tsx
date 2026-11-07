@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import type { SeatPlayerView } from '../../../shared/types';
 import type { ChatToastItem } from '../hooks/useChatToasts';
+import { AvatarFace } from './AvatarPicker';
 
 interface ChatToastsProps {
   toasts: ChatToastItem[];
@@ -45,7 +46,7 @@ export function ChatToasts({ toasts, players, chatVisible, onOpenChat, onClear, 
             aria-label={`${isMode ? 'Mód hry' : `Správa od ${author?.name ?? 'hráča'}`}: ${toast.text} — otvoriť chat`}
           >
             <span className="chat-toast-avatar" style={{ background: color }} aria-hidden>
-              {isMode ? '📢' : (author?.avatar.emoji ?? '🃏')}
+              {isMode ? '📢' : author ? <AvatarFace avatar={author.avatar} /> : '🃏'}
             </span>
             <span className="chat-toast-body">
               <strong className="chat-toast-name">{name}</strong>

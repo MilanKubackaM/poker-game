@@ -20,7 +20,7 @@ import { SidePanel, type SideTab } from './SidePanel';
 import type { StatsCashout, StatsTab } from './Stats';
 import { TableTopbar } from './TableTopbar';
 import { JoinRequestsBanner } from './JoinRequests';
-import { MergeDialog, SeatMenu } from './SeatMenu';
+import { SeatMenu } from './SeatMenu';
 import { usePlayerAudioMap } from '../playerAudio';
 
 export interface TableHandlers {
@@ -70,8 +70,6 @@ export interface TableUiState {
   roomView?: boolean;
   /** Demo: otvorené menu hráča pri stole (id hráča). */
   seatMenu?: string;
-  /** Demo: otvorený výber cieľa pri zlučovaní (id zlučovaného hráča). */
-  mergeFrom?: string;
 }
 
 export interface TableScreenProps {
@@ -240,7 +238,6 @@ export function TableScreen(props: TableScreenProps) {
   const playerAudio = usePlayerAudioMap();
   /** Otvorené menu hráča pri stole (klik na iného hráča). */
   const [seatMenuId, setSeatMenuId] = useState<string | null>(initialUi?.seatMenu ?? null);
-  const [mergeFrom, setMergeFrom] = useState<string | null>(initialUi?.mergeFrom ?? null);
   const seatMenuPlayer = seatMenuId && seatMenuId !== view.youId ? view.players.find((player) => player.id === seatMenuId) ?? null : null;
   const meReturning = returnModeOf(me) !== null;
 
@@ -656,8 +653,7 @@ export function TableScreen(props: TableScreenProps) {
         <PiggyWonDialog key={`won-${piggy!.startedAtHand}`} piggy={piggy!} currency={currency} youId={view.youId} onClose={() => setPiggyClosedAt(piggy!.startedAtHand)} />
       )}
 
-      {seatMenuPlayer && <SeatMenu view={view} player={seatMenuPlayer} actions={handlers.host} onMerge={setMergeFrom} onClose={() => setSeatMenuId(null)} />}
-      {mergeFrom && isHost && <MergeDialog view={view} fromId={mergeFrom} onMerge={handlers.host.merge} onClose={() => setMergeFrom(null)} />}
+      {seatMenuPlayer && <SeatMenu view={view} player={seatMenuPlayer} actions={handlers.host} onClose={() => setSeatMenuId(null)} />}
 
       {hostOpen && (isHost || youAreBanker) && (
         <HostPanel view={view} actions={handlers.host} bank={handlers.bank} onClose={() => setHostOpen(false)} initialTab={initialUi?.hostTab} />

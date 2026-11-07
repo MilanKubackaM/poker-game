@@ -53,11 +53,17 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 COMPOSE="$DOCKER compose -f deploy/nas/docker-compose.yml"
 
 echo "== Kopírujem projekt na $HOST:$DIR"
-tar ${TAR_EXTRA[@]+"${TAR_EXTRA[@]}"} -C "$ROOT" --exclude node_modules --exclude dist --exclude data --exclude .git --exclude docs/screenshots -czf - . \
+tar ${TAR_EXTRA[@]+"${TAR_EXTRA[@]}"} -C "$ROOT" --exclude node_modules --exclude dist --exclude data --exclude backups --exclude .git --exclude docs/screenshots -czf - . \
   | ssh "$HOST" "mkdir -p '$DIR' && tar -xzf - -C '$DIR'"
 
 echo "== Kontrolujem tajomstvá TURN v $DIR/deploy/nas/.env (len na NAS, nie v repozitári)"
 ssh "$HOST" "bash '$DIR/deploy/nas/ensure-env.sh' '$DOCKER'"
+
+echo "== Zálohujem dáta hry (stoly, účty) do $DIR/backups (posledných 10)"
+ssh "$HOST" "mkdir -p '$DIR/backups' && if $DOCKER volume inspect poker-night_poker-data >/dev/null 2>&1; then \
+  $DOCKER run --rm -v poker-night_poker-data:/data:ro -v '$DIR/backups':/backup alpine:3.20 \
+    tar -czf /backup/poker-data-\$(date +%Y%m%d-%H%M%S).tgz -C /data . && \
+  ls -1t '$DIR/backups'/poker-data-*.tgz | tail -n +11 | xargs -r rm -f; else echo 'Volume s dátami ešte neexistuje'; fi"
 
 echo "== Buildujem a spúšťam (typecheck + testy bežia v builde)"
 ssh "$HOST" "cd '$DIR' && TS_AUTHKEY='$AUTHKEY' $COMPOSE up -d --build"

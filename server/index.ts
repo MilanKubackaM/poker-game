@@ -9,8 +9,9 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { Server, type Socket } from 'socket.io';
 import { generate } from 'selfsigned';
-import type { Ack, Avatar, ClientConfig, JoinClosedPayload, JoinResult, MyHandRecord, NextHandOverride, PendingJoin, PendingResumeResult, PlayerAction, RtcPayload, SessionReplacedPayload, TableDeletedPayload, TableEvent, TableMetaPayload, TableSettings, TableSummary } from '../shared/types';
-import { ACCEPTED_AVATAR_EMOJIS, AVATAR_COLORS, DEFAULT_SETTINGS, MAX_CHAT_LENGTH, MAX_NAME_LENGTH, MAX_TABLE_NAME_LENGTH } from '../shared/constants';
+import type { Ack, ClientConfig, JoinClosedPayload, JoinResult, MyHandRecord, NextHandOverride, PendingJoin, PendingResumeResult, PlayerAction, RtcPayload, SessionReplacedPayload, TableDeletedPayload, TableEvent, TableMetaPayload, TableSettings } from '../shared/types';
+import type { AccountTablesResponse, ArchiveClaimResult, ArchivedTableView, TableJoinResponse } from '../shared/account';
+import { DEFAULT_SETTINGS, MAX_CHAT_LENGTH, MAX_TABLE_NAME_LENGTH } from '../shared/constants';
 import { resolveManifest } from '../shared/manifest';
 import { NET_SAMPLE_MS, sanitizeNetSample, type NetStatsResponse } from '../shared/netstats';
 import { LIMITS, TokenBucket, WINDOWS, WindowCounter, clientKey, originAllowed, trustProxyFromEnv } from './limits';
@@ -21,6 +22,9 @@ import { NetStatsStore, statsAccess } from './NetStats';
 import { APP_VERSION, type ServerVersionPayload } from '../shared/version';
 import { SessionManager } from './SessionManager';
 import type { JoinRequest, Table, TablePlayer } from './Table';
+import { AccountService } from './accounts/AccountService';
+import type { AccountProfile } from './accounts/directory';
+import { createAccountHub } from './accountSocket';
 
 const HTTP_PORT = Number(process.env.PORT ?? 3000);
 const HTTPS_PORT = process.env.HTTPS_PORT === '0' ? null : Number(process.env.HTTPS_PORT ?? 3443);
@@ -33,6 +37,10 @@ const RATE_LIMITED = 'Príliš veľa požiadaviek — chvíľu počkaj';
 const JOIN_EXPIRED = 'Žiadosť o prístup už neplatí — požiadaj o prístup znova';
 const STATS_TOKEN = process.env.STATS_TOKEN ?? '';
 const PRODUCTION = process.env.NODE_ENV === 'production';
+/** Verejná adresa hry pre odkazy v e-mailoch; pri vývoji (`npm run dev`) beží klient na Vite :5173, v Dockeri ho servuje server sám. */
+const PUBLIC_URL = (process.env.PUBLIC_URL ?? '').trim() || (PRODUCTION ? `http://localhost:${HTTP_PORT}` : 'http://localhost:5173');
+const ARCHIVED_TABLE = 'Tento stôl je archivovaný — je už len na prezeranie';
+const TAKEN_OVER = 'Stôl máš otvorený na inom zariadení';
 
 interface SocketData {
   code?: string;
@@ -42,6 +50,9 @@ interface SocketData {
   ip?: string;
   /** Čakajúca žiadosť o prístup — kým ju host neschváli, spojenie nie je v miestnosti stola a nedostáva nič zo stola. */
   pending?: { code: string; requestId: string };
+  /** Prihlásený účet (nastaví middleware účtov z `auth.token`). */
+  userId?: string;
+  authToken?: string;
 }
 
 type GameSocket = Socket<Record<string, (...args: any[]) => void>, Record<string, (...args: any[]) => void>, Record<string, never>, SocketData>;
@@ -115,11 +126,11 @@ io.use((rawSocket, next) => {
 });
 
 const pendingBroadcast = new Set<Table>();
-/** Po zamietnutí žiadosti nesmie rovnaká sieť chvíľu žiadať o ten istý stôl znova (`kód|ip` → do kedy). */
+/** Po zamietnutí žiadosti nesmie ten istý účet chvíľu žiadať o ten istý stôl znova (`kód|účet` → do kedy). */
 const rejectedJoins = new Map<string, number>();
 
-function rejectedUntil(code: string, ip: string): number {
-  const key = `${code}|${ip}`;
+function rejectedUntil(code: string, userId: string): number {
+  const key = `${code}|${userId}`;
   const until = rejectedJoins.get(key) ?? 0;
   if (until <= Date.now()) {
     rejectedJoins.delete(key);
@@ -127,6 +138,7 @@ function rejectedUntil(code: string, ip: string): number {
   }
   return until;
 }
+const accounts = new AccountService({ dataDir: DATA_DIR, publicUrl: PUBLIC_URL });
 const manager = new SessionManager({
   onChange(table) {
     if (pendingBroadcast.has(table)) {
@@ -143,7 +155,7 @@ const manager = new SessionManager({
   },
   onJoinClosed(table, request, outcome, player, byName) {
     if (outcome === 'rejected') {
-      rejectedJoins.set(`${table.code}|${request.ip}`, Date.now() + LIMITS.joinRejectCooldownMs);
+      rejectedJoins.set(`${table.code}|${request.userId ?? request.ip}`, Date.now() + LIMITS.joinRejectCooldownMs);
     }
     for (const socketId of request.sockets) {
       const socket = io.sockets.sockets.get(socketId) as GameSocket | undefined;
@@ -174,8 +186,34 @@ const manager = new SessionManager({
     }
     player.sockets.clear();
   },
-}, { dataDir: DATA_DIR });
-console.log(`Dáta stolov: ${DATA_DIR} (načítaných stolov: ${manager.count()})`);
+}, { dataDir: DATA_DIR, accounts });
+console.log(`Dáta stolov: ${DATA_DIR} (načítaných stolov: ${manager.count()}, v archíve: ${manager.archivedCount()})`);
+
+const accountHub = createAccountHub(io, accounts, {
+  // Nové meno / avatar / fotka účtu → pri všetkých stoloch, kde je členom (všetci pri stole to hneď vidia).
+  onProfileChanged(userId: string) {
+    const profile = accounts.profile(userId);
+    if (profile) {
+      manager.applyProfile(userId, profile);
+    }
+  },
+  // Zrušené prihlásenia (reset / zmena hesla) — tie spojenia sa od stolov odpoja.
+  onSessionsRevoked(userId: string, exceptSocketId: string | null) {
+    for (const rawSocket of io.sockets.sockets.values()) {
+      const socket = rawSocket as GameSocket;
+      if (socket.data.userId === userId && socket.id !== exceptSocketId) {
+        unbind(socket);
+      }
+    }
+  },
+  onLogout(socketId: string) {
+    const socket = io.sockets.sockets.get(socketId) as GameSocket | undefined;
+    if (socket) {
+      unbind(socket);
+    }
+  },
+});
+io.use(accountHub.middleware);
 
 const netStats = new NetStatsStore(DATA_DIR);
 netStats.prune();
@@ -232,20 +270,6 @@ function sendFullMeta(socket: GameSocket, table: Table): void {
   }
   const payload: TableMetaPayload = { code: table.code, full: true, ...table.metaSince(), leaderboard };
   socket.emit('table:meta', payload);
-}
-
-/**
- * Celé meta znova všetkým v miestnosti — po zmene, ktorá prepísala už odoslané položky (zlúčenie hráčov). Kurzor sa
- * zahodí, aby sa nastavil podľa aktuálneho stavu a ďalšie novinky išli len od neho.
- */
-function resendFullMeta(table: Table): void {
-  metaSent.delete(table);
-  for (const socketId of io.sockets.adapter.rooms.get(room(table.code)) ?? []) {
-    const socket = io.sockets.sockets.get(socketId) as GameSocket | undefined;
-    if (socket) {
-      sendFullMeta(socket, table);
-    }
-  }
 }
 
 /** Novinky v ledgeri/histórii a zmenený leaderboard celej miestnosti — raz, nie pri každom ťahu celé. */
@@ -366,6 +390,8 @@ app.get('/api/netstats', async (request, response) => {
   }
 });
 
+accountHub.httpRoutes(app);
+
 if (existsSync(STATIC_DIR)) {
   const manifestPath = path.join(STATIC_DIR, 'manifest.webmanifest');
   const builtManifest = existsSync(manifestPath) ? readFileSync(manifestPath, 'utf8') : null;
@@ -401,23 +427,17 @@ if (existsSync(STATIC_DIR)) {
   });
 }
 
-function cleanName(value: unknown): string | null {
-  if (typeof value !== 'string') {
-    return null;
+/** Prihlásený účet s overeným e-mailom — bez neho sa pri stole nedá hrať. */
+function verifiedAccount(socket: GameSocket): { ok: true; userId: string; profile: AccountProfile } | { ok: false; error: string } {
+  const userId = socket.data.userId;
+  const profile = userId ? accounts.profile(userId) : undefined;
+  if (!userId || !profile) {
+    return { ok: false, error: 'Prihlás sa' };
   }
-  const name = value.replace(/\s+/g, ' ').trim().slice(0, MAX_NAME_LENGTH);
-  return name.length ? name : null;
-}
-
-function cleanAvatar(value: unknown): Avatar | null {
-  if (!value || typeof value !== 'object') {
-    return null;
+  if (!profile.emailVerified) {
+    return { ok: false, error: 'Najprv over svoj e-mail' };
   }
-  const { emoji, color } = value as Record<string, unknown>;
-  if (typeof emoji !== 'string' || typeof color !== 'string' || !ACCEPTED_AVATAR_EMOJIS.includes(emoji) || !AVATAR_COLORS.includes(color)) {
-    return null;
-  }
-  return { emoji, color };
+  return { ok: true, userId, profile };
 }
 
 function reply<T>(ack: unknown, payload: Ack<T>): void {
@@ -444,13 +464,36 @@ function unbind(socket: GameSocket): void {
   socket.data.playerId = undefined;
 }
 
+/** Iné spojenia čakajúce na tú istú žiadosť (iné zariadenie toho istého účtu) — žiadosť si berie toto spojenie. */
+function takeOverPending(socket: GameSocket, table: Table, request: JoinRequest): void {
+  const replaced: SessionReplacedPayload = { code: table.code };
+  for (const socketId of [...request.sockets]) {
+    if (socketId === socket.id) {
+      continue;
+    }
+    request.sockets.delete(socketId);
+    const other = io.sockets.sockets.get(socketId) as GameSocket | undefined;
+    if (other && other.data.pending?.requestId === request.id) {
+      other.data.pending = undefined;
+      other.emit('session:replaced', replaced);
+    }
+  }
+}
+
 /** Spojenie čaká na schválenie žiadosti — mimo miestnosti stola, dostane len `table:approved` / `table:joinClosed`. */
 function attachPending(socket: GameSocket, table: Table, request: JoinRequest): PendingJoin {
   unbind(socket);
+  takeOverPending(socket, table, request);
   request.sockets.add(socket.id);
   socket.data.pending = { code: table.code, requestId: request.id };
   return { code: table.code, requestId: request.id, token: request.token };
 }
+
+/**
+ * Spojenie, ktoré sa k miestu pripojilo naposledy (zariadenie, ktoré stôl práve má). Automatický návrat po výpadku
+ * spojenia (`table:resume { reconnect: true, previousSocketId }`) prejde len z neho — iné zariadenie stôl medzitým prevzalo.
+ */
+const lastBoundSocket = new WeakMap<TablePlayer, string>();
 
 function bind(socket: GameSocket, table: Table, player: TablePlayer): void {
   if (socket.data.pending) {
@@ -467,16 +510,33 @@ function bind(socket: GameSocket, table: Table, player: TablePlayer): void {
   }
   socket.data.code = table.code;
   socket.data.playerId = player.id;
+  lastBoundSocket.set(player, socket.id);
   socket.join(room(table.code));
   sendFullMeta(socket, table);
-  // Ten istý hráč sa pripojil inde (iné okno / zariadenie) — staré spojenia sa odstavia samy, rtcId je najnovší socket.
+  // Ten istý hráč (účet) sa pripojil inde (iné okno / zariadenie): staré spojenia server od stola odpojí a pošle ich
+  // do lobby (`session:replaced`). Späť sa dostanú len výslovným `table:resume` — server ich sám nepripojí.
   const replaced: SessionReplacedPayload = { code: table.code };
-  for (const socketId of player.sockets) {
-    if (socketId !== socket.id) {
-      io.sockets.sockets.get(socketId)?.emit('session:replaced', replaced);
+  if (player.userId) {
+    for (const request of [...table.joinRequests.values()]) {
+      if (request.userId === player.userId) {
+        takeOverPending(socket, table, request);
+        request.sockets.delete(socket.id);
+      }
+    }
+    table.closeJoinsOfUser(player.userId);
+  }
+  for (const socketId of table.takeOver(player, socket.id)) {
+    const other = io.sockets.sockets.get(socketId) as GameSocket | undefined;
+    if (!other) {
+      continue;
+    }
+    other.emit('session:replaced', replaced);
+    other.leave(room(table.code));
+    if (other.data.code === table.code && other.data.playerId === player.id) {
+      other.data.code = undefined;
+      other.data.playerId = undefined;
     }
   }
-  table.attachSocket(player, socket.id);
   socket.emit('table:history', table.events);
   jukebox.sendTo(socket, table);
   netStats.recordEvent(table.code, table.settings.name, player.id, player.name, 'pripojený k serveru');
@@ -619,11 +679,22 @@ io.on('connection', (rawSocket) => {
 
   jukebox.register(withPlayer, withHost);
 
-  handle<{ name?: unknown; avatar?: unknown; settings?: Partial<TableSettings> }>('table:create', (payload, ack) => {
-    const name = cleanName(payload.name);
-    const avatar = cleanAvatar(payload.avatar);
-    if (!name || !avatar) {
-      reply(ack, { ok: false, error: 'Zadaj meno a vyber avatara' });
+  accountHub.register(socket, handle, ip);
+
+  /** Prihlásený účet s overeným e-mailom, inak odpoveď s chybou a null. */
+  const requireAccount = (ack: unknown): { userId: string; profile: AccountProfile } | null => {
+    const account = verifiedAccount(socket);
+    if (!account.ok) {
+      reply(ack, { ok: false, error: account.error });
+      return null;
+    }
+    return account;
+  };
+
+  /** Meno a avatar pri stole sú vždy z účtu (fotka nahrádza emoji). */
+  handle<{ settings?: Partial<TableSettings> }>('table:create', (payload, ack) => {
+    const account = requireAccount(ack);
+    if (!account) {
       return;
     }
     const refused = claimTableCreation(ip);
@@ -632,7 +703,8 @@ io.on('connection', (rawSocket) => {
       reply(ack, { ok: false, error: refused });
       return;
     }
-    const table = manager.create({ ...DEFAULT_SETTINGS, name: `Stôl ${name}`.slice(0, MAX_TABLE_NAME_LENGTH) });
+    const { username, avatar } = account.profile;
+    const table = manager.create({ ...DEFAULT_SETTINGS, name: `Stôl ${username}`.slice(0, MAX_TABLE_NAME_LENGTH) });
     if (payload.settings && typeof payload.settings === 'object') {
       const settings: Partial<TableSettings> = { ...payload.settings };
       delete settings.actionTimeoutSec;
@@ -646,7 +718,7 @@ io.on('connection', (rawSocket) => {
         return;
       }
     }
-    const added = table.addPlayer(name, avatar);
+    const added = table.addPlayer(username, { ...avatar }, account.userId);
     if (!added.ok || !added.data) {
       manager.remove(table.code);
       reply(ack, { ok: false, error: added.ok ? 'Chyba' : added.error });
@@ -656,28 +728,45 @@ io.on('connection', (rawSocket) => {
     reply<JoinResult>(ack, { ok: true, data: { code: table.code, playerId: added.data.id, token: added.data.token } });
   });
 
-  handle<{ code?: unknown; name?: unknown; avatar?: unknown }>('table:join', (payload, ack) => {
+  /**
+   * Člen stola (podľa účtu) sa pripojí hneď → `{ joined }`; inak vznikne žiadosť, ktorú schvaľuje host → `{ pending }`.
+   * Účet má pri stole najviac jednu žiadosť — druhé zariadenie ju prevezme.
+   */
+  handle<{ code?: unknown }>('table:join', (payload, ack) => {
     if (!lookupsPerIp.hit(ip)) {
       reply(ack, { ok: false, error: RATE_LIMITED });
       return;
     }
-    const table = typeof payload.code === 'string' ? manager.get(payload.code) : undefined;
+    const account = requireAccount(ack);
+    if (!account) {
+      return;
+    }
+    const code = typeof payload.code === 'string' ? payload.code.trim() : '';
+    if (code && manager.getArchived(code)) {
+      reply(ack, { ok: false, error: ARCHIVED_TABLE });
+      return;
+    }
+    const table = code ? manager.get(code) : undefined;
     if (!table) {
       reply(ack, { ok: false, error: 'Stôl neexistuje' });
       return;
     }
-    const name = cleanName(payload.name);
-    const avatar = cleanAvatar(payload.avatar);
-    if (!name || !avatar) {
-      reply(ack, { ok: false, error: 'Zadaj meno a vyber avatara' });
+    if (table.memberByUser(account.userId)) {
+      const resumed = table.resumeByUser(account.userId);
+      if (!resumed.ok || !resumed.data) {
+        reply(ack, { ok: false, error: resumed.ok ? 'Relácia vypršala' : resumed.error });
+        return;
+      }
+      bind(socket, table, resumed.data);
+      reply<TableJoinResponse>(ack, { ok: true, data: { joined: { code: table.code, playerId: resumed.data.id, token: resumed.data.token } } });
       return;
     }
-    const existing = socket.data.pending?.code === table.code ? table.joinRequests.get(socket.data.pending.requestId) : undefined;
+    const existing = table.joinRequestByUser(account.userId);
     if (existing) {
-      reply<PendingJoin>(ack, { ok: true, data: { code: table.code, requestId: existing.id, token: existing.token } });
+      reply<TableJoinResponse>(ack, { ok: true, data: { pending: attachPending(socket, table, existing) } });
       return;
     }
-    if (rejectedUntil(table.code, ip)) {
+    if (rejectedUntil(table.code, account.userId)) {
       reply(ack, { ok: false, error: 'Host tvoju žiadosť zamietol — o prístup môžeš požiadať znova o pár minút' });
       return;
     }
@@ -685,20 +774,24 @@ io.on('connection', (rawSocket) => {
       reply(ack, { ok: false, error: 'Príliš veľa nových hráčov naraz — skús to o chvíľu' });
       return;
     }
-    const requested = table.requestJoin(name, avatar, ip);
+    const requested = table.requestJoin(account.profile.username, { ...account.profile.avatar }, ip, account.userId);
     if (!requested.ok || !requested.data) {
       reply(ack, { ok: false, error: requested.ok ? 'Chyba' : requested.error });
       return;
     }
     joinPerIp.add(ip);
     joinGlobal.add(GLOBAL);
-    reply<PendingJoin>(ack, { ok: true, data: attachPending(socket, table, requested.data) });
+    reply<TableJoinResponse>(ack, { ok: true, data: { pending: attachPending(socket, table, requested.data) } });
   });
 
-  // Návrat k žiadosti o prístup po obnovení stránky / výpadku spojenia (alebo k už schválenej žiadosti).
+  // Návrat k žiadosti o prístup po obnovení stránky / výpadku spojenia (alebo k už schválenej žiadosti) — len ten istý účet.
   handle<{ code?: unknown; requestId?: unknown; token?: unknown }>('table:pendingResume', (payload, ack) => {
     if (!lookupsPerIp.hit(ip)) {
       reply(ack, { ok: false, error: RATE_LIMITED });
+      return;
+    }
+    const account = requireAccount(ack);
+    if (!account) {
       return;
     }
     const table = typeof payload.code === 'string' ? manager.get(payload.code) : undefined;
@@ -708,8 +801,8 @@ io.on('connection', (rawSocket) => {
     }
     const approved = table.approvedJoin(payload.requestId, payload.token);
     if (approved) {
-      const resumed = table.resume(approved.id, approved.token);
-      if (!resumed.ok || !resumed.data) {
+      const resumed = approved.userId === account.userId ? table.resume(approved.id, approved.token) : undefined;
+      if (!resumed?.ok || !resumed.data) {
         reply(ack, { ok: false, error: JOIN_EXPIRED });
         return;
       }
@@ -718,7 +811,7 @@ io.on('connection', (rawSocket) => {
       return;
     }
     const request = table.joinRequest(payload.requestId, payload.token);
-    if (!request) {
+    if (!request || request.userId !== account.userId) {
       reply(ack, { ok: false, error: JOIN_EXPIRED });
       return;
     }
@@ -737,17 +830,43 @@ io.on('connection', (rawSocket) => {
     reply(ack, table.cancelJoin(request.id, request.token));
   });
 
-  handle<{ code?: unknown; playerId?: unknown; token?: unknown; standing?: unknown }>('table:resume', (payload, ack) => {
+  /**
+   * Návrat k stolu podľa účtu (token miesta netreba); `standing` = návrat do čakárne bez automatického čakania na BB.
+   * `reconnect: true` = automatický návrat klienta po výpadku spojenia s `previousSocketId` (id spojenia pred výpadkom):
+   * ak stôl medzitým otvorilo iné zariadenie, návrat sa odmietne — staré zariadenie si stôl samo späť nevezme.
+   */
+  handle<{ code?: unknown; standing?: unknown; reconnect?: unknown; previousSocketId?: unknown }>('table:resume', (payload, ack) => {
     if (!lookupsPerIp.hit(ip)) {
       reply(ack, { ok: false, error: RATE_LIMITED });
       return;
     }
-    const table = typeof payload.code === 'string' ? manager.get(payload.code) : undefined;
+    const account = requireAccount(ack);
+    if (!account) {
+      return;
+    }
+    const code = typeof payload.code === 'string' ? payload.code.trim() : '';
+    if (code && manager.getArchived(code)) {
+      reply(ack, { ok: false, error: ARCHIVED_TABLE });
+      return;
+    }
+    const table = code ? manager.get(code) : undefined;
     if (!table) {
       reply(ack, { ok: false, error: 'Relácia vypršala' });
       return;
     }
-    const resumed = table.resume(payload.playerId, payload.token, payload.standing === true);
+    if (payload.reconnect === true) {
+      const member = table.memberByUser(account.userId);
+      const holder = member ? lastBoundSocket.get(member) : undefined;
+      const previous = typeof payload.previousSocketId === 'string' ? payload.previousSocketId : null;
+      const takenOver = previous !== null
+        ? holder !== undefined && holder !== previous
+        : !!member && [...member.sockets].some((socketId) => socketId !== socket.id);
+      if (takenOver) {
+        reply(ack, { ok: false, error: TAKEN_OVER });
+        return;
+      }
+    }
+    const resumed = table.resumeByUser(account.userId, payload.standing === true);
     if (!resumed.ok || !resumed.data) {
       reply(ack, { ok: false, error: resumed.ok ? 'Relácia vypršala' : resumed.error });
       return;
@@ -757,12 +876,41 @@ io.on('connection', (rawSocket) => {
     reply<JoinResult>(ack, { ok: true, data: { code: table.code, playerId: player.id, token: player.token } });
   });
 
-  handle<{ items?: unknown }>('table:summaries', (payload, ack) => {
+  // „Moje stoly“: aktívne stoly účtu + archív (prevzatý aj dokázaný tokenmi miest spred účtov z tohto prehliadača).
+  handle<{ deviceSeats?: unknown }>('account:tables', (payload, ack) => {
     if (!lookupsPerIp.hit(ip)) {
       reply(ack, { ok: false, error: RATE_LIMITED });
       return;
     }
-    reply<{ summaries: TableSummary[]; missing: string[] }>(ack, { ok: true, data: manager.summaries(payload.items) });
+    const account = requireAccount(ack);
+    if (!account) {
+      return;
+    }
+    reply<AccountTablesResponse>(ack, { ok: true, data: manager.accountTables(account.userId, payload.deviceSeats) });
+  });
+
+  handle<{ code?: unknown; deviceSeats?: unknown }>('archive:view', (payload, ack) => {
+    if (!lookupsPerIp.hit(ip)) {
+      reply(ack, { ok: false, error: RATE_LIMITED });
+      return;
+    }
+    const account = requireAccount(ack);
+    if (!account) {
+      return;
+    }
+    reply<ArchivedTableView>(ack, manager.archiveView(account.userId, payload.code, payload.deviceSeats));
+  });
+
+  handle<{ seats?: unknown }>('archive:claim', (payload, ack) => {
+    if (!lookupsPerIp.hit(ip)) {
+      reply(ack, { ok: false, error: RATE_LIMITED });
+      return;
+    }
+    const account = requireAccount(ack);
+    if (!account) {
+      return;
+    }
+    reply<ArchiveClaimResult>(ack, { ok: true, data: manager.claimArchive(account.userId, payload.seats) });
   });
 
   handle<{ code?: unknown }>('table:exists', (payload, ack) => {
@@ -771,6 +919,10 @@ io.on('connection', (rawSocket) => {
       return;
     }
     const table = typeof payload.code === 'string' ? manager.get(payload.code) : undefined;
+    if (!table && typeof payload.code === 'string' && manager.getArchived(payload.code)) {
+      reply(ack, { ok: true, data: { players: 0, archived: true } });
+      return;
+    }
     reply(ack, table ? { ok: true, data: { players: table.players.size } } : { ok: false, error: 'Stôl neexistuje' });
   });
 
@@ -803,24 +955,9 @@ io.on('connection', (rawSocket) => {
     reply(ack, { ok: true });
   });
 
-  withPlayer<{ name?: unknown; avatar?: unknown; camera?: unknown; microphone?: unknown }>('player:update', (payload, table, player, ack) => {
-    const patch: { name?: string; avatar?: Avatar; camera?: boolean; microphone?: boolean } = {};
-    if (payload.name !== undefined) {
-      const name = cleanName(payload.name);
-      if (!name) {
-        reply(ack, { ok: false, error: 'Neplatné meno' });
-        return;
-      }
-      patch.name = name;
-    }
-    if (payload.avatar !== undefined) {
-      const avatar = cleanAvatar(payload.avatar);
-      if (!avatar) {
-        reply(ack, { ok: false, error: 'Neplatný avatar' });
-        return;
-      }
-      patch.avatar = avatar;
-    }
+  // Meno a avatar sú z účtu (mení sa v profile) — pri stole sa mení len kamera a mikrofón; `name`/`avatar` sa ignorujú.
+  withPlayer<{ camera?: unknown; microphone?: unknown }>('player:update', (payload, table, player, ack) => {
+    const patch: { camera?: boolean; microphone?: boolean } = {};
     if (typeof payload.camera === 'boolean') {
       patch.camera = payload.camera;
     }
@@ -923,13 +1060,9 @@ io.on('connection', (rawSocket) => {
   // Vyhodiť sa dá každý člen (sediaci, offline, odchádzajúci aj ten, kto od stola odišiel) okrem seba a zakladateľa.
   withHost<{ playerId?: unknown }>('host:kick', (payload, table, player, ack) => reply(ack, table.kickMember(player, payload.playerId)));
 
-  // Zlúčenie hráča (napr. ten istý človek z iného zariadenia) — ledger a história sa prepíšu, všetci dostanú celé meta.
-  withHost<{ fromId?: unknown; toId?: unknown }>('host:merge', (payload, table, player, ack) => {
-    const outcome = table.mergeMember(player, payload.fromId, payload.toId);
-    if (outcome.ok) {
-      resendFullMeta(table);
-    }
-    reply(ack, outcome);
+  // Zlúčenie hráčov (v1.1.0) je pri stoloch s účtami zbytočné — ten istý človek má vždy to isté miesto.
+  withHost('host:merge', (_payload, _table, _player, ack) => {
+    reply(ack, { ok: false, error: 'Zlúčenie hráčov už nie je potrebné — každý hráč má svoj účet' });
   });
 
   withHost<{ playerId?: unknown }>('host:transfer', (payload, table, player, ack) => {
@@ -1097,6 +1230,8 @@ httpServer.listen(HTTP_PORT, '0.0.0.0', () => {
 function shutdown(signal: string): void {
   console.log(`${signal}: ukladám stoly a končím`);
   manager.flush();
+  // až po stoloch — ich uloženie ešte zapíše štatistiky do účtov
+  accounts.flush();
   process.exit(0);
 }
 

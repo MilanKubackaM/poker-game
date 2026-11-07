@@ -16,6 +16,7 @@ import { PiggyDots, PiggySvg, inPiggy, piggySeriesLabel } from './GameModes';
 import { owesBlinds, playerStateLabel, returnModeOf } from './PlayerPause';
 import { loadRoomView, saveRoomView } from '../storage';
 import { confirmDialog } from './ConfirmDialog';
+import { AvatarFace } from './AvatarPicker';
 import { VideoTile } from './VideoTile';
 import { PendingPlayerCards } from './JoinRequests';
 
@@ -228,7 +229,7 @@ export function WaitingRoom(props: TableScreenProps) {
                     <article key={player.id} className={classes.join(' ')}>
                       <div className="room-player-top">
                         <div className={props.speaking?.has(player.id) ? 'room-portrait speaking' : 'room-portrait'} style={{ background: player.avatar.color }} title={props.speaking?.has(player.id) ? 'Práve hovorí' : undefined}>
-                          {showVideo ? <VideoTile stream={stream} mirrored={isMe} /> : <span className="room-emoji">{player.avatar.emoji}</span>}
+                          {showVideo ? <VideoTile stream={stream} mirrored={isMe} /> : <AvatarFace avatar={player.avatar} emojiClassName="room-emoji" />}
                           <span className={player.connected ? 'presence online' : 'presence'} title={player.connected ? 'online' : 'offline'} />
                         </div>
                         <div className="room-player-info">
@@ -266,13 +267,13 @@ export function WaitingRoom(props: TableScreenProps) {
                   <h2>Odišli od stola</h2>
                   <span className="muted">{view.departed.length}</span>
                 </div>
-                <p className="departed-note">Žetóny majú uložené. Kto sa vrátil z iného zariadenia ako nový hráč, toho zlúč do jeho nového účtu.</p>
+                <p className="departed-note">Žetóny majú uložené — keď sa vráti, sadne si na svoje miesto aj z iného zariadenia.</p>
                 <div className="room-player-grid">
                   {view.departed.map((member) => (
                     <article key={member.id} className="room-player offline departed">
                       <div className="room-player-top">
                         <div className="room-portrait" style={{ background: member.avatar.color }}>
-                          <span className="room-emoji">{member.avatar.emoji}</span>
+                          <AvatarFace avatar={member.avatar} emojiClassName="room-emoji" />
                         </div>
                         <div className="room-player-info">
                           <div className="room-player-name">

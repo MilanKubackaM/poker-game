@@ -6,7 +6,7 @@ import { GameScreen } from '../components/WaitingRoom';
 import { ConfirmHost } from '../components/ConfirmDialog';
 import type { ChatToastItem } from '../hooks/useChatToasts';
 import { MyHandsContext } from '../myHands';
-import type { Profile } from '../storage';
+import type { AccountView } from '../../../shared/account';
 import {
   DEMO_LEFT_TABLES,
   DEMO_TABLE_ERRORS,
@@ -96,7 +96,6 @@ const handlers: TableHandlers = {
     saveSettings: async () => null,
     nextHand: noop,
     kick: noop,
-    merge: noop,
     setBanker: noop,
     setAdmin: noop,
     piggy: noop,
@@ -167,7 +166,6 @@ const SCREENS = [
   'speaking',
   'seat-menu',
   'seat-menu-guest',
-  'merge-dialog',
   'host-departed',
   'room-departed',
   'host-modes',
@@ -549,11 +547,10 @@ function scenario(screen: string): Scenario | null {
     }
     case 'host-piggy':
       return { view: demoView({ piggy: demoPiggy() }), ui: { hostOpen: true, hostTab: 'game' } };
-    case 'seat-menu':
-    case 'merge-dialog': {
-      // Katka je offline a nie je v ruke — host ju môže zlúčiť do iného hráča.
+    case 'seat-menu': {
+      // Katka je offline a nie je v ruke — host ju môže vyhodiť.
       const players = demoPlayers().map((player) => (player.id === 'p5' ? { ...player, inHand: false, status: null, lastAction: null } : player));
-      return { view: demoView({ players, departed: demoDeparted() }), ui: screen === 'seat-menu' ? { seatMenu: 'p5' } : { mergeFrom: 'p5' } };
+      return { view: demoView({ players, departed: demoDeparted() }), ui: { seatMenu: 'p5' } };
     }
     case 'seat-menu-guest':
       return { view: demoView({ youId: 'p2', legal: null }), ui: { seatMenu: 'p3' } };
@@ -614,8 +611,17 @@ function scenario(screen: string): Scenario | null {
 /** Demo nemá server — moje karty v histórii sú ukážkové (inak by sa História pokúsila pripojiť cez socket). */
 const loadDemoMyHands = () => Promise.resolve(demoMyHands());
 
+/** Demo účet pre lobby (bez servera). */
+const DEMO_ACCOUNT: AccountView = {
+  id: 'demo',
+  username: 'Milan',
+  email: 'milan@example.com',
+  emailVerified: true,
+  avatar: { emoji: '🦊', color: '#e76f51' },
+  createdAt: 0,
+};
+
 export function DemoApp({ screen }: { screen: string }) {
-  const [profile, setProfile] = useState<Profile>({ name: 'Milan', avatar: { emoji: '🦊', color: '#e76f51' } });
   const data = useMemo(() => scenario(screen || 'table'), [screen]);
   const [streams, setStreams] = useState<Map<string, MediaStream>>(new Map());
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
@@ -640,21 +646,22 @@ export function DemoApp({ screen }: { screen: string }) {
   if (screen === 'lobby' || screen === 'invite' || screen === 'my-tables') {
     return (
       <Lobby
-        profile={profile}
-        onProfileChange={setProfile}
+        account={DEMO_ACCOUNT}
+        onOpenProfile={noop}
         inviteCode={screen === 'invite' ? 'K7QX2M' : null}
         busy={false}
         error={null}
         onCreate={noop}
         onJoin={noop}
         onCancelInvite={noop}
-        myTables={screen === 'my-tables' ? demoSummaries() : []}
-        leftTables={screen === 'my-tables' ? DEMO_LEFT_TABLES : []}
+        tables={{ active: screen === 'my-tables' ? demoSummaries().map((table) => ({ ...table, left: DEMO_LEFT_TABLES.includes(table.code) })) : [], archived: [] }}
+        resumingCode={null}
         tableErrors={screen === 'my-tables' ? DEMO_TABLE_ERRORS : {}}
         notice={screen === 'my-tables' ? { text: 'Žetóny 18,60 € ostávajú uložené pri stole „Utorková partia“.', tone: 'info' } : null}
         onDismissNotice={noop}
         onResumeTable={noop}
-        onForgetTable={noop}
+        onOpenArchive={noop}
+        onClaim={noop}
       />
     );
   }

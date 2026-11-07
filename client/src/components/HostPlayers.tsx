@@ -8,9 +8,9 @@ import type { BankActions, HostActions } from './HostPanel';
 import { computeCashout } from '../../../shared/settlement';
 import { PlayerMoneyHistory } from './MoneyHistory';
 import { MoneyInput } from './MoneyInput';
-import { MergeDialog, canKick, isSeated, mergeBlockReason } from './SeatMenu';
+import { canKick, isSeated } from './SeatMenu';
 
-type AdminActions = Pick<HostActions, 'kick' | 'merge' | 'setAdmin' | 'setBanker'>;
+type AdminActions = Pick<HostActions, 'kick' | 'setAdmin' | 'setBanker'>;
 
 /** Kto je kto pri stole: ja, vlastník stola, bankár, ostatní s právami hosta. */
 export interface PlayerRoles {
@@ -165,12 +165,11 @@ export function useDebts(view: TableView): Map<string, number> {
 }
 
 /**
- * Tlačidlo „Akcie“ vpravo hore na karte hráča: práva hosta, bankár, zlúčenie, vyhodenie (len pre hosta).
- * Pri členovi, ktorý odišiel od stola, ostáva len zlúčenie a vyhodenie.
+ * Tlačidlo „Akcie“ vpravo hore na karte hráča: práva hosta, bankár, vyhodenie (len pre hosta).
+ * Pri členovi, ktorý odišiel od stola, ostáva len vyhodenie.
  */
 export function PlayerActionsMenu({ player, view, actions, roles }: { player: SeatPlayerView | DepartedMemberView; view: TableView; actions: AdminActions; roles: PlayerRoles }) {
   const [open, setOpen] = useState(false);
-  const [merging, setMerging] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const isSelf = player.id === roles.youId;
   const isOwner = player.id === roles.ownerId;
@@ -202,10 +201,6 @@ export function PlayerActionsMenu({ player, view, actions, roles }: { player: Se
   }
   if (seated && player.id !== roles.bankerId) {
     items.push({ key: 'banker', label: '🏦 Označiť ako bankára', run: () => actions.setBanker(player.id) });
-  }
-  if (!isSelf) {
-    const reason = mergeBlockReason(view, player.id);
-    items.push({ key: 'merge', label: '🔀 Zlúčiť do…', hint: reason ?? undefined, disabled: !!reason, run: () => setMerging(true) });
   }
   if (canKick(view, player.id)) {
     items.push({ key: 'kick', label: 'Vyhodiť', danger: true, run: () => actions.kick(player.id) });
@@ -240,7 +235,6 @@ export function PlayerActionsMenu({ player, view, actions, roles }: { player: Se
           ))}
         </div>
       )}
-      {merging && <MergeDialog view={view} fromId={player.id} onMerge={actions.merge} onClose={() => setMerging(false)} />}
     </div>
   );
 }
@@ -287,7 +281,7 @@ export function HostPlayersList({ view, actions, bank }: { view: TableView; acti
       {roles.youAreAdmin && (view.departed ?? []).length > 0 && (
         <section className="stack-gap departed-section" aria-label="Odišli od stola">
           <h3>Odišli od stola</h3>
-          <p className="departed-note">Žetóny majú uložené. Kto sa vrátil z iného zariadenia ako nový hráč, toho sem zlúč.</p>
+          <p className="departed-note">Žetóny majú uložené — keď sa vráti, sadne si na svoje miesto aj z iného zariadenia.</p>
           {view.departed.map((member) => (
             <div key={member.id} className="host-player">
               <div className="host-player-head">

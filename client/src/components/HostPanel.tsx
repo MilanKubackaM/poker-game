@@ -17,8 +17,6 @@ export interface HostActions {
   nextHand: (override: NextHandOverride | null) => void;
   /** Vyhodí člena stola (sediaceho aj toho, kto odišiel) — pred odoslaním sa opýta na potvrdenie. */
   kick: (playerId: string) => void;
-  /** Zlúči offline hráča `fromId` do člena `toId` (všetko sa presunie na `toId`) — pred odoslaním sa opýta na potvrdenie. */
-  merge: (fromId: string, toId: string) => void;
   /** Pridelí rolu bankára; keď doterajší bankár drží peniaze, opýta sa, či ich odovzdá. */
   setBanker: (playerId: string) => void;
   setAdmin: (playerId: string, admin: boolean) => void;

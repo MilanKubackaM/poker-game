@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { Currency, LeaderboardRow, LedgerEntry } from '../../../shared/types';
 import { formatMoney } from '../../../shared/money';
 import { computeCashout, revertedIds } from '../../../shared/settlement';
+import { AvatarFace } from './AvatarPicker';
 import type { BankActions } from './HostPanel';
 
 const CASH_KINDS = new Set<LedgerEntry['kind']>(['debt-paid', 'payout', 'handover']);
@@ -12,6 +13,8 @@ export interface CashoutProps {
   leaderboard: LeaderboardRow[];
   currency: Currency;
   youId: string;
+  /** Ďalšie moje miesta (archív stola); pri živom stole stačí `youId`. */
+  highlightIds?: readonly string[];
   bankerId: string;
   /** Len pre bankára — ostatní cashout iba vidia. */
   bank?: BankActions;
@@ -23,7 +26,7 @@ export interface CashoutProps {
  * Cashout ako v Splitwise: kto vyhral/prehral, kto drží peniaze, kto ešte dlží a čo najmenej prevodov, ktorými sa všetci
  * vyrovnajú. Bankár odkliká splatené dlhy a prebehnuté prevody (omyl vráti „Zrušiť“).
  */
-export function Cashout({ ledger, leaderboard, currency, youId, bankerId, bank, piggyAmount }: CashoutProps) {
+export function Cashout({ ledger, leaderboard, currency, youId, highlightIds = [], bankerId, bank, piggyAmount }: CashoutProps) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const money = (cents: number, sign = false) => formatMoney(cents, currency, { sign });
@@ -37,6 +40,7 @@ export function Cashout({ ledger, leaderboard, currency, youId, bankerId, bank, 
   const debtors = cashout.rows.filter((row) => row.debt > 0);
   const active = cashout.rows.filter((row) => row.result !== 0 || row.balance !== 0 || row.holds !== 0 || row.stack !== 0);
   const piggyBlocks = piggyAmount > 0;
+  const isMe = (playerId: string) => playerId === youId || highlightIds.includes(playerId);
 
   const run = async (key: string, action: () => Promise<string | null>) => {
     if (busy) {
@@ -55,11 +59,11 @@ export function Cashout({ ledger, leaderboard, currency, youId, bankerId, bank, 
       <span className="cashout-name">
         {avatar && (
           <span className="lb-avatar" style={{ background: avatar.color }} aria-hidden>
-            {avatar.emoji}
+            <AvatarFace avatar={avatar} />
           </span>
         )}
-        <span>{fallback}</span>
-        {playerId === youId && <span className="room-you">ty</span>}
+        <span className="cashout-name-text">{fallback}</span>
+        {isMe(playerId) && <span className="room-you">ty</span>}
         {playerId === bankerId && (
           <span className="banker-badge" title="Bankár">
             🏦
@@ -171,7 +175,7 @@ export function Cashout({ ledger, leaderboard, currency, youId, bankerId, bank, 
             </thead>
             <tbody>
               {active.map((row) => (
-                <tr key={row.playerId} className={row.playerId === youId ? 'lb-me' : undefined}>
+                <tr key={row.playerId} className={isMe(row.playerId) ? 'lb-me' : undefined}>
                   <th scope="row" className="ledger-name">
                     {name(row.playerId, row.playerName)}
                   </th>

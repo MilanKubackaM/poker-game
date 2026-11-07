@@ -1,46 +1,56 @@
 import { useCallback, useState, type FormEvent } from 'react';
 import type { Currency, TableSettings, TableSummary, Variant } from '../../../shared/types';
-import { CURRENCIES, CURRENCY_LABELS, DEFAULT_SETTINGS, MAX_NAME_LENGTH, MAX_TABLE_NAME_LENGTH, VARIANT_LABELS } from '../../../shared/constants';
+import type { AccountView, ArchivedTableSummary } from '../../../shared/account';
+import { CURRENCIES, CURRENCY_LABELS, DEFAULT_SETTINGS, MAX_TABLE_NAME_LENGTH, VARIANT_LABELS } from '../../../shared/constants';
 import { promptInstall, useInstallOffer } from '../install';
 import type { InstallGuideId } from '../installGuide';
 import { InstallGuideDialog } from './InstallGuide';
 import { checkMoneyRules, moneyRulesDraft, type MoneyRulesDraft } from '../moneyRules';
-import type { Profile } from '../storage';
-import { AvatarPicker } from './AvatarPicker';
+import { AvatarBadge } from './AvatarPicker';
 import { MoneyInput } from './MoneyInput';
 import { MyTables } from './MyTables';
 import { VersionTag } from './UpdateBanner';
+import '../account/account.css';
 
 /** Oznámenie na úvodnej obrazovke — napr. po odchode od stola alebo keď stôl niekto zmazal. */
 export interface LobbyNotice {
   text: string;
   tone: 'info' | 'danger';
+  /** Informačné oznámenie, ktoré samo nezmizne (napr. stôl prevzalo iné zariadenie). */
+  persistent?: boolean;
+}
+
+/** „Moje stoly“ zo servera (`account:tables`) — aktívne stoly účtu a archív stolov spred účtov. */
+export interface LobbyTables {
+  active: TableSummary[];
+  archived: ArchivedTableSummary[];
 }
 
 interface LobbyProps {
-  profile: Profile;
-  onProfileChange: (profile: Profile) => void;
+  account: AccountView;
+  onOpenProfile: () => void;
   inviteCode: string | null;
   busy: boolean;
   error: string | null;
   onCreate: (settings: Partial<TableSettings>) => void;
   onJoin: (code: string) => void;
   onCancelInvite: () => void;
-  /** Uložené stoly s prehľadom zo servera; prázdne = sekcia sa nezobrazí. */
-  myTables?: TableSummary[];
-  resumingCode?: string | null;
-  onResumeTable?: (code: string) => void;
-  onForgetTable?: (code: string) => void;
-  /** Kódy stolov, od ktorých som odišiel (žetóny ostali uložené). */
-  leftTables?: string[];
+  /** null = ešte sa načítava / nepodarilo sa načítať — sekcia sa nezobrazí. */
+  tables: LobbyTables | null;
+  resumingCode: string | null;
+  claimingCode?: string | null;
   /** Chyby návratu ku stolu podľa kódu (napr. plný stôl). */
   tableErrors?: Record<string, string>;
+  onResumeTable: (code: string) => void;
+  onOpenArchive: (code: string) => void;
+  onClaim: (code: string) => void;
+  onClaimAll?: () => void;
   notice?: LobbyNotice | null;
   onDismissNotice?: () => void;
 }
 
 export function Lobby(props: LobbyProps) {
-  const { profile, onProfileChange, inviteCode, busy, error, onCreate, onJoin, onCancelInvite, myTables = [], resumingCode = null, onResumeTable, onForgetTable, leftTables, tableErrors, notice = null, onDismissNotice } = props;
+  const { account, onOpenProfile, inviteCode, busy, error, onCreate, onJoin, onCancelInvite, tables, resumingCode, claimingCode = null, tableErrors, onResumeTable, onOpenArchive, onClaim, onClaimAll, notice = null, onDismissNotice } = props;
   const installOffer = useInstallOffer();
   const [installGuide, setInstallGuide] = useState<InstallGuideId | null>(null);
   const closeInstallGuide = useCallback(() => setInstallGuide(null), []);
@@ -49,7 +59,6 @@ export function Lobby(props: LobbyProps) {
   const [currency, setCurrency] = useState<Currency>(DEFAULT_SETTINGS.currency);
   const [money, setMoney] = useState<MoneyRulesDraft>(() => moneyRulesDraft(DEFAULT_SETTINGS));
   const [variant, setVariant] = useState<Variant>(DEFAULT_SETTINGS.defaultVariant);
-  const nameMissing = !profile.name.trim();
   const { values, errors } = checkMoneyRules(money, currency);
   const setMoneyField = (key: keyof MoneyRulesDraft) => (text: string) => setMoney((current) => ({ ...current, [key]: text }));
 
@@ -70,6 +79,13 @@ export function Lobby(props: LobbyProps) {
 
   return (
     <div className="lobby">
+      <div className="account-bar">
+        <button type="button" className="account-chip" onClick={onOpenProfile} aria-haspopup="dialog" title="Profil, heslo, štatistiky, odhlásenie">
+          <AvatarBadge avatar={account.avatar} size={32} />
+          <span className="account-chip-name">{account.username}</span>
+          <span className="account-chip-action">Profil</span>
+        </button>
+      </div>
       <header className="lobby-hero">
         <div className="brand-chip" aria-hidden>♠</div>
         <h1>Poker Night</h1>
@@ -106,29 +122,15 @@ export function Lobby(props: LobbyProps) {
         </div>
       )}
 
-      <section className="panel lobby-profile">
-        <h2>Kto si?</h2>
-        <label className="field">
-          <span>Prezývka</span>
-          <input
-            value={profile.name}
-            maxLength={MAX_NAME_LENGTH}
-            placeholder="napr. Milan"
-            onChange={(event) => onProfileChange({ ...profile, name: event.target.value })}
-            autoFocus
-          />
-        </label>
-        <AvatarPicker value={profile.avatar} onChange={(avatar) => onProfileChange({ ...profile, avatar })} />
-      </section>
-
       {inviteCode ? (
         <section className="panel lobby-invite">
           <h2>Pozvánka ku stolu</h2>
           <div className="table-code-big">{inviteCode}</div>
           {error && <div className="error">{error}</div>}
           <form onSubmit={submitJoin}>
-            <button className="btn btn-primary btn-block" disabled={busy || nameMissing}>
-              {busy ? 'Odosielam žiadosť…' : 'Požiadať o prístup ku stolu'}
+            <p className="muted">Pripojíš sa ako <strong>{account.username}</strong>. Ak už pri stole sedíš, vrátiš sa rovno k nemu.</p>
+            <button className="btn btn-primary btn-block" disabled={busy}>
+              {busy ? 'Pripájam…' : 'Pripojiť sa ku stolu'}
             </button>
           </form>
           <button type="button" className="btn btn-ghost btn-block" onClick={onCancelInvite}>
@@ -137,8 +139,18 @@ export function Lobby(props: LobbyProps) {
         </section>
       ) : (
         <>
-        {onResumeTable && onForgetTable && (
-          <MyTables summaries={myTables} leftCodes={leftTables} errors={tableErrors} busyCode={resumingCode} onResume={onResumeTable} onForget={onForgetTable} />
+        {tables && (
+          <MyTables
+            active={tables.active}
+            archived={tables.archived}
+            resumingCode={resumingCode}
+            tableErrors={tableErrors}
+            onResume={onResumeTable}
+            onOpenArchive={onOpenArchive}
+            onClaim={onClaim}
+            onClaimAll={onClaimAll}
+            claimingCode={claimingCode}
+          />
         )}
         <div className="lobby-actions">
           <form className="panel" onSubmit={submitCreate}>
@@ -185,7 +197,7 @@ export function Lobby(props: LobbyProps) {
               </select>
             </label>
             {error && <div className="error">{error}</div>}
-            <button className="btn btn-primary btn-block" disabled={busy || nameMissing || !values}>
+            <button className="btn btn-primary btn-block" disabled={busy || !values}>
               {busy ? 'Zakladám…' : 'Založiť stôl a pozvať kamarátov'}
             </button>
           </form>
@@ -202,7 +214,7 @@ export function Lobby(props: LobbyProps) {
                 onChange={(event) => setCode(event.target.value.toUpperCase())}
               />
             </label>
-            <button className="btn btn-secondary btn-block" disabled={busy || nameMissing || code.trim().length < 4}>
+            <button className="btn btn-secondary btn-block" disabled={busy || code.trim().length < 4}>
               Pripojiť sa ku stolu
             </button>
           </form>

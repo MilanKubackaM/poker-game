@@ -15,6 +15,9 @@ services:
       # Odkiaľ brať skutočnú IP hráča pre limity: cloudflare (CF-Connecting-IP, verejná adresa cez poker-tunnel),
       # xff (Tailscale Funnel / Caddy), off (priame spojenie). Hráči v LAN na :3000 si hlavičku vedia podvrhnúť — platia im aj tak globálne limity.
       TRUST_PROXY: "${TRUST_PROXY:-cloudflare}"
+      # Verejná adresa hry pre odkazy v e-mailoch (overenie e-mailu, obnovenie hesla), napr. https://192.168.1.10:3443
+      PUBLIC_URL: "${PUBLIC_URL:-}"
+      # Bez MAIL_OUTBOX_DIR sa e-maily len vypíšu do logu kontajnera (docker logs poker-night) — odkaz sa dá skopírovať odtiaľ
       # Voliteľné vlastné STUN/TURN servery (JSON), napr.:
       # ICE_SERVERS: '[{"urls":"stun:stun.l.google.com:19302"}]'
     volumes:

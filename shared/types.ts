@@ -18,6 +18,8 @@ export interface PlayerAction {
 export interface Avatar {
   emoji: string;
   color: string;
+  /** Profilová fotka účtu (URL `/api/photos/<userId>.<ext>?v=<verzia>`); keď je, zobrazí sa namiesto emoji. */
+  photo?: string;
 }
 
 /** Mena stola. Všetky sumy (stacky, blindy, stávky, poty, ledger) sú celé čísla v centoch/haliernoch. */
@@ -355,6 +357,8 @@ export interface TableSummary {
   /** Môj stack (vrátane čakajúcich žetónov) a či mám práva hosta. */
   myStack: number;
   myIsAdmin: boolean;
+  /** Od stola som odišiel (žetóny ostali uložené) — návrat cez `table:resume`. */
+  left?: boolean;
   createdAt: number;
   lastActivity: number;
 }

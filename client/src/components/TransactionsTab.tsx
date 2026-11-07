@@ -1,7 +1,8 @@
-import type { Avatar, Currency, LedgerEntry, LedgerKind, SeatPlayerView } from '../../../shared/types';
+import type { Avatar, Currency, LedgerEntry, LedgerKind } from '../../../shared/types';
 import { formatMoney } from '../../../shared/money';
 import { isChipEntry, revertedIds } from '../../../shared/settlement';
 import { settlementText } from '../ledgerText';
+import { AvatarInline } from './AvatarPicker';
 
 const KIND_LABELS: Record<LedgerKind, string> = {
   buyin: 'Štartovací vklad',
@@ -14,6 +15,19 @@ const KIND_LABELS: Record<LedgerKind, string> = {
   reversal: 'Zrušená platba',
 };
 
+/**
+ * Hráč v súhrne transakcií — pri živom stole `SeatPlayerView` (zoradení podľa miesta), v archíve riadok leaderboardu
+ * (bez miesta, poradie ostáva; `present` = sedel pri stole).
+ */
+export interface TransactionsPlayer {
+  id: string;
+  name: string;
+  avatar: Avatar;
+  stack: number;
+  seat?: number;
+  present?: boolean;
+}
+
 interface PlayerSummary {
   playerId: string;
   name: string;
@@ -25,10 +39,10 @@ interface PlayerSummary {
   result: number;
 }
 
-function summarize(ledger: LedgerEntry[], players: SeatPlayerView[]): PlayerSummary[] {
+function summarize(ledger: LedgerEntry[], players: TransactionsPlayer[]): PlayerSummary[] {
   const rows = new Map<string, PlayerSummary>();
-  for (const player of [...players].sort((left, right) => left.seat - right.seat)) {
-    rows.set(player.id, { playerId: player.id, name: player.name, avatar: player.avatar, present: true, deposits: 0, withdrawals: 0, current: player.stack, result: 0 });
+  for (const player of [...players].sort((left, right) => (left.seat ?? 0) - (right.seat ?? 0))) {
+    rows.set(player.id, { playerId: player.id, name: player.name, avatar: player.avatar, present: player.present ?? true, deposits: 0, withdrawals: 0, current: player.stack, result: 0 });
   }
   for (const entry of ledger) {
     if (!isChipEntry(entry)) {
@@ -56,11 +70,13 @@ const timeFormat = new Intl.DateTimeFormat('sk-SK', { hour: '2-digit', minute: '
 
 interface TransactionsTabProps {
   ledger: LedgerEntry[];
-  players: SeatPlayerView[];
+  players: TransactionsPlayer[];
   currency: Currency;
+  /** Moje riadky (archív stola — mohol som mať viac miest); pri živom stole sa nezvýrazňuje nič. */
+  highlightIds?: readonly string[];
 }
 
-export function TransactionsTab({ ledger, players, currency }: TransactionsTabProps) {
+export function TransactionsTab({ ledger, players, currency, highlightIds = [] }: TransactionsTabProps) {
   const money = (cents: number, sign = false) => formatMoney(cents, currency, { sign });
   const summary = summarize(ledger, players);
   const avatarOf = (playerId: string) => players.find((player) => player.id === playerId)?.avatar ?? null;
@@ -82,10 +98,10 @@ export function TransactionsTab({ ledger, players, currency }: TransactionsTabPr
           </thead>
           <tbody>
             {summary.map((row) => (
-              <tr key={row.playerId} className={row.present ? undefined : 'ledger-left'}>
+              <tr key={row.playerId} className={[row.present ? '' : 'ledger-left', highlightIds.includes(row.playerId) ? 'lb-me' : ''].filter(Boolean).join(' ') || undefined}>
                 <th scope="row" className="ledger-name" title={row.present ? row.name : `${row.name} (odišiel)`}>
                   <span className="ledger-name-text">
-                    {row.avatar?.emoji ?? '🚪'} {row.name}
+                    {row.avatar ? <AvatarInline avatar={row.avatar} /> : '🚪'} {row.name}
                   </span>
                 </th>
                 <td>{money(row.deposits)}</td>
@@ -112,7 +128,7 @@ export function TransactionsTab({ ledger, players, currency }: TransactionsTabPr
                     {timeFormat.format(entry.at)}
                   </time>
                   <span className="ledger-entry-player">
-                    {avatar?.emoji ?? '🚪'} {entry.playerName}
+                    {avatar ? <AvatarInline avatar={avatar} /> : '🚪'} {entry.playerName}
                     {!chip && ` → ${entry.toName ?? ''}`}
                   </span>
                   <span className={chip ? `ledger-amount ${signClass(entry.amount)}` : 'ledger-amount'}>{chip ? money(entry.amount, true) : money(entry.amount)}</span>

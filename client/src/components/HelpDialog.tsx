@@ -207,6 +207,50 @@ function chapters(zoom: (src: string, alt: string) => void): Chapter[] {
       ),
     },
     {
+      id: 'account',
+      group: 'Začíname',
+      icon: '👤',
+      title: 'Účet a zariadenia',
+      body: () => (
+        <>
+          <Points
+            items={[
+              <>
+                <strong>Registrácia</strong> — e-mail, hráčske meno a heslo (2×). Hrať sa dá až po <strong>overení e-mailu</strong> cez odkaz v správe; keď neprišla, pošli ju znova alebo oprav e-mail.
+              </>,
+              <>
+                <strong>Prihlásenie</strong> — e-mailom alebo hráčskym menom. Pri prihlásení je odkaz <strong>„Zabudol som heslo“</strong> — príde e-mail s odkazom na nové heslo.
+              </>,
+              <>
+                <strong>Jedno meno pre všetky stoly</strong> — pri pripájaní ku stolu sa už nič nezadáva. Meno, heslo, e-mail aj avatara zmeníš v <strong>Profile</strong>; zmena sa prejaví pri všetkých tvojich stoloch.
+              </>,
+              <>
+                <strong>Profilová fotka</strong> — v Profile si nahráš fotku, ktorá nahradí emoji všade, kde je tvoj avatar. Dá sa kedykoľvek zmazať.
+              </>,
+              <>
+                <strong>Peniaze sú pri každom stole zvlášť</strong> — každý stôl má vlastné žetóny, transakcie aj cashout; účet nič medzi stolmi neprenáša.
+              </>,
+              <>
+                <strong>Štatistiky</strong> — pri stole leaderboard a história, v Profile súčty cez všetky stoly (ruky, výhry, najväčší pot, výsledok podľa meny).
+              </>,
+            ]}
+          />
+          <h4 className="help-subtitle">Viac zariadení</h4>
+          <Points
+            items={[
+              <>
+                Otvoríš <strong>ten istý stôl na inom zariadení</strong> (mobil ↔ počítač) → hra sa presunie tam a staré zariadenie sa vráti do lobby. Na mieste a žetónoch sa nič nezmení.
+              </>,
+              <><strong>Rôzne stoly na rôznych zariadeniach</strong> naraz sú v poriadku.</>,
+              <>
+                <strong>Staré stoly spred účtov</strong> sú v <strong>Moje stoly → Archív</strong> — len na čítanie. Cez „Prevziať do účtu“ sa započítajú do tvojich štatistík a uvidíš ich na všetkých zariadeniach.
+              </>,
+            ]}
+          />
+        </>
+      ),
+    },
+    {
       id: 'holdem',
       group: 'Začíname',
       icon: '♠',
@@ -626,7 +670,7 @@ function chapters(zoom: (src: string, alt: string) => void): Chapter[] {
                 </tr>
                 <tr>
                   <th>★ Spoluhost</th>
-                  <td>spustiť a pozastaviť hru, meniť pravidlá (platia od ďalšej ruky), špeciálne kolá, 7-2, Prasiatko, jukebox, púšťať nových hráčov, vyhodiť alebo zlúčiť hráča, prideliť práva hosta a rolu bankára</td>
+                  <td>spustiť a pozastaviť hru, meniť pravidlá (platia od ďalšej ruky), špeciálne kolá, 7-2, Prasiatko, jukebox, púšťať nových hráčov, vyhodiť hráča, prideliť práva hosta a rolu bankára</td>
                 </tr>
                 <tr>
                   <th>🏦 Bankár</th>
@@ -646,10 +690,7 @@ function chapters(zoom: (src: string, alt: string) => void): Chapter[] {
               <>
                 <strong>Vyhodiť</strong> môže host každého okrem seba a zakladateľa — aj hráča v ruke (hneď zloží karty), offline aj toho, kto odišiel od stola. Žetóny ostanú v transakciách a vyrovnajú sa v cashoute; späť sa vyhodený dostane len so súhlasom hosta.
               </>,
-              <>
-                <strong>Zlúčiť do…</strong> — keď sa niekto pripojil z iného zariadenia ako nový hráč: host klikne na pôvodného (offline) hráča a vyberie nového. Žetóny, transakcie, štatistiky aj história prejdú na nového a pôvodný zo stola zmizne. Nedá sa počas rozohranej ruky toho hráča ani počas losovania.
-              </>,
-              <>Kto od stola odišiel, je v paneli hosta aj v čakárni v sekcii „Odišli od stola“ — host ho odtiaľ môže vyhodiť alebo zlúčiť.</>,
+              <>Kto od stola odišiel, je v paneli hosta aj v čakárni v sekcii „Odišli od stola“ — host ho odtiaľ môže vyhodiť. Keď sa vráti (aj z iného zariadenia), sadne si na svoje miesto so svojimi žetónmi.</>,
             ]}
           />
           {shot('table-roles', 'Odznaky rolí pri stole', 'Pri stole: ♛ a 🏦 pred menom hosta, ★ pri spoluhostovi')}

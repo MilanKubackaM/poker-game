@@ -418,6 +418,25 @@ h3 {
   flex-shrink: 0;
 }
 
+/* Profilová fotka účtu namiesto emoji — vyplní celý kruh rodiča (rodič nemusí mať overflow: hidden). */
+.avatar-photo {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Fotka v riadku textu (chat, transakcie, losovanie) — veľká ako emoji. */
+.avatar-inline {
+  width: 1.25em;
+  height: 1.25em;
+  border-radius: 50%;
+  object-fit: cover;
+  display: inline-block;
+  vertical-align: -0.25em;
+}
+
 .avatar-grid {
   display: flex;
   flex-wrap: wrap;
@@ -4500,6 +4519,190 @@ h3 {
   font-size: 0.84rem;
 }
 
+/* Moje stoly — archív stolov spred účtov (len na čítanie) */
+.my-tables-archive {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.my-tables-archive-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.my-tables-archive-caret {
+  color: var(--muted);
+  width: 1em;
+}
+
+.my-tables-archive-title {
+  font-weight: 750;
+  color: var(--gold);
+}
+
+.my-tables-archive-note {
+  margin: 0;
+  font-size: 0.84rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.my-tables-archive-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.my-table-archived {
+  border-style: dashed;
+}
+
+.my-table-result {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Archív stola — celá obrazovka, len na čítanie */
+.archive-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 55; /* pod .modal-backdrop (60) — potvrdzovacie dialógy musia byť nad archívom */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: radial-gradient(1200px 700px at 50% 30%, #12261d 0%, var(--bg) 70%) fixed;
+}
+
+.archive-inner {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.archive-head-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.archive-title {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.archive-title h1 {
+  margin: 0;
+  font-size: 1.4rem;
+  color: var(--gold);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.archive-badge {
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.archive-facts {
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+}
+
+.archive-claim {
+  display: flex;
+  align-items: center;
+  gap: 12px 16px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(232, 194, 110, 0.45);
+  background: rgba(232, 194, 110, 0.1);
+}
+
+.archive-claim p {
+  margin: 0;
+  flex: 1 1 280px;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.archive-body {
+  padding: 0 0 16px;
+  gap: 0;
+  overflow: hidden;
+}
+
+/* Päť záložiek sa na úzkom displeji nezmestí — posúvajú sa vodorovne. */
+.archive-tabs {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.archive-tabs .tab {
+  flex: none;
+  white-space: nowrap;
+}
+
+.archive-content {
+  padding: 12px 16px 0;
+}
+
+.archive-mine-summary {
+  margin: 0 0 10px;
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+
+.archive-screen .ledger-table tr.lb-me > * {
+  background: rgba(232, 194, 110, 0.08);
+}
+
+.archive-screen .lb-me .ledger-name-text {
+  color: var(--gold);
+}
+
+@media (max-width: 760px) {
+  .archive-inner {
+    padding: 12px 10px 32px;
+    gap: 12px;
+  }
+
+  .archive-title h1 {
+    font-size: 1.15rem;
+  }
+
+  .archive-content {
+    padding: 10px 10px 0;
+  }
+
+  .archive-tabs .tab {
+    padding: 8px 10px;
+  }
+}
+
 /* Dialóg zmazania sa renderuje do <body> — nad panelom hosta (z-index 50). */
 .delete-backdrop {
   z-index: 70;
@@ -5030,6 +5233,23 @@ h3 {
   gap: 6px;
   font-weight: 700;
   min-width: 0;
+}
+
+/* V tabuľke Prehľad je bunka s menom široká len zvyšok riadku — dlhé meno sa skráti, nesmie prekryť stĺpec Výsledok. */
+.ledger-name .cashout-name {
+  display: flex;
+  max-width: 100%;
+}
+
+.cashout-name > * {
+  flex-shrink: 0;
+}
+
+.cashout-name > .cashout-name-text {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .cashout-arrow {

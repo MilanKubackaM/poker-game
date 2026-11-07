@@ -38,6 +38,10 @@ only their own cards plus the public information (board, bets, shown hands). Bec
 complete deck for the hand in memory, and with it every player's hole cards. That is how every server-dealt online poker
 game works, including commercial poker rooms.
 
+Since v1.2.0 every player has an account. The server stores the email address, the username, the profile photo and a
+`scrypt` hash of the password; login sessions and email links are stored only as SHA-256 hashes. Emails are written to an
+outbox and sent by a separate container, so the game server itself never holds the mail password.
+
 ## Guarantees you can verify yourself
 
 ### 1. Nobody can choose the deck

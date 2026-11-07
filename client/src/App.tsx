@@ -18,18 +18,18 @@ import type {
   TableSettings,
   TableMetaPayload,
   TableStateView,
-  TableSummary,
   TableView,
 } from '../../shared/types';
-import { MAX_HISTORY_HANDS, MAX_SUMMARY_REQUEST } from '../../shared/constants';
+import type { AccountTablesResponse, AccountView, ArchiveClaimResult, ArchivedTableView, DeviceSeat, TableJoinResponse } from '../../shared/account';
+import { MAX_HISTORY_HANDS } from '../../shared/constants';
 import { formatMoney } from '../../shared/money';
 import { computeCashout } from '../../shared/settlement';
-import { Lobby, type LobbyNotice } from './components/Lobby';
+import { Lobby, type LobbyNotice, type LobbyTables } from './components/Lobby';
 import { tableName } from './components/TableTopbar';
 import type { TableHandlers } from './components/TableScreen';
 import { GameScreen } from './components/WaitingRoom';
 import { RemoteAudio, hasLiveAudio } from './components/VideoTile';
-import { SessionReplacedScreen } from './components/SessionReplaced';
+import { ArchiveScreen } from './components/ArchiveScreen';
 import { useSpeakingIds } from './voiceActivity';
 import { ConfirmHost, choiceDialog, confirmDialog } from './components/ConfirmDialog';
 import { DemoApp } from './demo/DemoApp';
@@ -40,18 +40,20 @@ import { useMesh, type MeshPeer } from './hooks/useMesh';
 import { usePushToTalk } from './hooks/usePushToTalk';
 import { useChatSound, useGameSounds } from './sound';
 import { NO_RESPONSE, emit, socket } from './socket';
-import { listSavedTables, loadPendingJoin, loadProfile, loadSession, markTableLeft, savePendingJoin, saveProfile, saveRoomView, saveSession, type Profile } from './storage';
+import { listSavedTables, loadPendingJoin, rememberInvite, savePendingJoin, saveRoomView, takeRememberedInvite } from './storage';
 import { PendingJoinScreen } from './components/JoinRequests';
 import { useFairShuffle } from './fairness';
+import { AuthScreen } from './account/AuthScreen';
+import { ProfileDialog } from './account/ProfileDialog';
+import { ResetPasswordScreen, VerifyLinkScreen, readAuthLink, type AuthLink } from './account/LinkScreens';
+import { VerifyEmailScreen } from './account/VerifyEmailScreen';
+import { startAccount, useAccount } from './account/session';
 
-/** Chyba `table:resume`, po ktorej sa k stolu už vrátiť nedá (vyhodenie, zmazaný stôl) — vtedy ho zabudneme. */
-const SESSION_EXPIRED = 'Relácia vypršala';
 /** Informačné oznámenie na úvodnej obrazovke po čase zmizne; varovanie (zmazaný stôl) ostáva, kým ho nezavrieš. */
 const NOTICE_INFO_MS = 9000;
 
 interface ResumeResult {
   ok: boolean;
-  /** null = nebolo čo obnoviť (žiadny uložený token). */
   error: string | null;
 }
 
@@ -61,9 +63,35 @@ interface PendingLeave {
   notice: string;
 }
 
+/** Otvorený historický stôl (spred účtov) — len na čítanie. */
+interface OpenArchive {
+  view: ArchivedTableView;
+  claimed: boolean;
+}
+
 function codeFromPath(): string | null {
   const match = window.location.pathname.match(/^\/t\/([A-Za-z0-9]{4,8})\/?$/);
   return match ? match[1].toUpperCase() : null;
+}
+
+/** Pozvánka z adresy; inak pozvánka zapamätaná pred prihlásením (napr. overovací odkaz otvorený v novej karte). */
+function initialInviteCode(): string | null {
+  const fromPath = codeFromPath();
+  const remembered = takeRememberedInvite();
+  if (fromPath) {
+    return fromPath;
+  }
+  if (remembered && window.location.pathname === '/') {
+    window.history.replaceState(null, '', `/t/${remembered}`);
+    return remembered;
+  }
+  return null;
+}
+
+/** Staré miesta pri stoloch v tomto prehliadači (dôkaz pre archív), voliteľne len pre jeden stôl. */
+function deviceSeats(code?: string): DeviceSeat[] {
+  const seats = listSavedTables();
+  return code ? seats.filter((seat) => seat.code === code) : seats;
 }
 
 const StatsPage = lazy(() => import('./stats/StatsPage').then((module) => ({ default: module.StatsPage })));
@@ -80,12 +108,62 @@ export function App() {
   if (demo !== null) {
     return <DemoApp screen={demo} />;
   }
-  return <LiveApp />;
+  return <AccountGate />;
 }
 
-function LiveApp() {
-  const [profile, setProfile] = useState<Profile>(loadProfile);
-  const [inviteCode, setInviteCode] = useState<string | null>(codeFromPath);
+/**
+ * Bez prihlásenia sa nedá hrať: prihlásenie / registrácia → overenie e-mailu → aplikácia. Odkazy z e-mailov
+ * (`/verify`, `/reset`) fungujú aj bez prihlásenia. Pozvánka `/t/<KÓD>` prežije prihlásenie aj overenie.
+ */
+function AccountGate() {
+  const { status, account, notice, offline } = useAccount();
+  const [link, setLink] = useState<AuthLink | null>(readAuthLink);
+  const inviteCode = link ? null : codeFromPath();
+
+  useEffect(() => {
+    startAccount();
+  }, []);
+
+  useEffect(() => {
+    // Overovací token je jednorazový — adresu vyčistíme hneď, aby obnovenie stránky neskúšalo použitý odkaz znova.
+    if (link?.kind === 'verify' && window.location.pathname !== '/') {
+      window.history.replaceState(null, '', '/');
+    }
+  }, [link]);
+
+  useEffect(() => {
+    if (status !== 'ready' && inviteCode) {
+      rememberInvite(inviteCode);
+    }
+  }, [status, inviteCode]);
+
+  const finishLink = useCallback(() => {
+    if (window.location.pathname !== '/') {
+      window.history.replaceState(null, '', '/');
+    }
+    setLink(null);
+  }, []);
+
+  if (link?.kind === 'verify') {
+    return <VerifyLinkScreen token={link.token} signedIn={status !== 'signed-out'} onDone={finishLink} />;
+  }
+  if (link?.kind === 'reset') {
+    return <ResetPasswordScreen token={link.token} onDone={finishLink} />;
+  }
+  if (status === 'loading') {
+    return <div className="loading-screen">{offline ? 'Server neodpovedá — skúšam sa pripojiť znova…' : 'Prihlasujem…'}</div>;
+  }
+  if (status === 'signed-out' || !account) {
+    return <AuthScreen inviteCode={inviteCode} notice={notice} />;
+  }
+  if (status === 'unverified') {
+    return <VerifyEmailScreen account={account} inviteCode={inviteCode} />;
+  }
+  return <LiveApp account={account} />;
+}
+
+function LiveApp({ account }: { account: AccountView }) {
+  const [inviteCode, setInviteCode] = useState<string | null>(initialInviteCode);
   const [joined, setJoined] = useState<JoinResult | null>(null);
   const [liveView, setView] = useState<TableStateView | null>(null);
   const [meta, setMeta] = useState<TableMeta | null>(null);
@@ -109,24 +187,24 @@ function LiveApp() {
   const [selfRtcId, setSelfRtcId] = useState<string | null>(socket.id ?? null);
   const [clockOffset, setClockOffset] = useState(0);
   const [config, setConfig] = useState<ClientConfig>({ iceServers: [], httpsPort: null, publicHost: null });
-  const [myTables, setMyTables] = useState<TableSummary[]>([]);
-  const [leftTables, setLeftTables] = useState<string[]>([]);
+  const [tables, setTables] = useState<LobbyTables | null>(null);
+  const tablesRequest = useRef(0);
   const [tableErrors, setTableErrors] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState<LobbyNotice | null>(null);
   const [resumingCode, setResumingCode] = useState<string | null>(null);
-  const [resuming, setResuming] = useState(() => {
-    const code = codeFromPath();
-    return !!code && (!!loadSession(code) || !!loadPendingJoin(code));
-  });
+  const [claimingCode, setClaimingCode] = useState<string | null>(null);
+  const [archive, setArchive] = useState<OpenArchive | null>(null);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const closeProfile = useCallback(() => setProfileOpen(false), []);
+  /** Odkaz `/t/<KÓD>` pri načítaní: najprv skúsime návrat (som členom stola), inak sa ukáže pozvánka. */
+  const [resuming, setResuming] = useState(() => !!codeFromPath());
   /** Moja žiadosť o prístup, kým ju host neschváli — vtedy zo stola nevidím nič. */
   const [pending, setPending] = useState<PendingJoin | null>(null);
   const pendingRef = useRef<PendingJoin | null>(null);
   pendingRef.current = pending;
-  /** Ten istý hráč otvoril stôl v inom okne / zariadení — toto okno je odstavené (bez hlasu, videa a štatistík). */
-  const [replaced, setReplaced] = useState(false);
-  const replacedRef = useRef(false);
-  replacedRef.current = replaced;
   const joinedRef = useRef<JoinResult | null>(null);
+  /** Id spojenia, ktorým som sa naposledy naviazal na stôl — server podľa neho pri návrate po výpadku pozná, či stôl medzitým neprevzalo iné zariadenie. */
+  const socketIdRef = useRef<string | null>(socket.id ?? null);
   const viewRef = useRef<TableView | null>(null);
   const pendingLeave = useRef<PendingLeave | null>(null);
   const deletingCode = useRef<string | null>(null);
@@ -144,7 +222,7 @@ function LiveApp() {
   const showNotice = useCallback((next: LobbyNotice | null) => {
     setNotice(next);
     window.clearTimeout(noticeTimer.current);
-    if (next?.tone === 'info') {
+    if (next?.tone === 'info' && !next.persistent) {
       noticeTimer.current = window.setTimeout(() => setNotice(null), NOTICE_INFO_MS);
     }
   }, []);
@@ -155,45 +233,35 @@ function LiveApp() {
     toastTimer.current = window.setTimeout(() => setToast(null), 3500);
   }, []);
 
-  const updateProfile = (next: Profile) => {
-    setProfile(next);
-    saveProfile(next);
-  };
-
   const enterTable = useCallback((result: JoinResult) => {
-    replacedRef.current = false;
-    setReplaced(false);
     // Server môže mať príznaky z iného okna (alebo ich zhodil pri výpadku spojenia) — podľa nich ostatní púšťajú zvuk
-    // a watchdog mesh siete čaká, či tečie. Pošleme skutočný stav tohto okna.
+    // a watchdog mesh siete čaká, či tečie. Pošleme skutočný stav tohto okna (meno a avatar idú z účtu).
     void emit('player:update', { ...mediaFlagsRef.current });
-    saveSession(result.code, { playerId: result.playerId, token: result.token });
+    socketIdRef.current = socket.id ?? null;
     setJoined(result);
     setInviteCode(result.code);
+    setArchive(null);
     if (codeFromPath() !== result.code) {
       window.history.pushState(null, '', `/t/${result.code}`);
     }
   }, []);
 
   /**
-   * Návrat k stolu s uloženým tokenom (aj po odchode — server ma znova posadí so stackom). Token zabudneme len pri
-   * „Relácia vypršala“; pri plnom stole alebo výpadku spojenia ostáva, aby sa dalo skúsiť znova.
+   * Návrat k stolu podľa účtu (aj po odchode — server ma znova posadí so stackom). `standing` = otvoriť čakáreň,
+   * `reconnect` = automatický návrat po výpadku spojenia (server ho odmietne, ak stôl medzitým prevzalo iné zariadenie).
    */
   const resume = useCallback(
-    async (code: string, standing = false): Promise<ResumeResult> => {
-      const stored = loadSession(code);
-      if (!stored) {
-        return { ok: false, error: null };
-      }
-      const response = await emit<JoinResult>('table:resume', { code, ...stored, ...(standing ? { standing: true } : {}) });
+    async (code: string, options: { standing?: boolean; reconnect?: { previousSocketId: string | null } } = {}): Promise<ResumeResult> => {
+      const response = await emit<JoinResult>('table:resume', {
+        code,
+        ...(options.standing ? { standing: true } : {}),
+        ...(options.reconnect ? { reconnect: true, ...(options.reconnect.previousSocketId ? { previousSocketId: options.reconnect.previousSocketId } : {}) } : {}),
+      });
       if (response.ok && response.data) {
         enterTable(response.data);
         return { ok: true, error: null };
       }
-      const error = response.error ?? NO_RESPONSE;
-      if (error === SESSION_EXPIRED) {
-        saveSession(code, null);
-      }
-      return { ok: false, error };
+      return { ok: false, error: response.error ?? NO_RESPONSE };
     },
     [enterTable],
   );
@@ -228,7 +296,7 @@ function LiveApp() {
     [enterTable],
   );
 
-  /** Zatvorí stôl na klientovi a vráti sa na úvodnú obrazovku (token ostáva, ak ho volajúci nezabudol). */
+  /** Zatvorí stôl na klientovi a vráti sa na úvodnú obrazovku. */
   const stopMedia = media.stopAll;
   const closeTable = useCallback(() => {
     const code = joinedRef.current?.code;
@@ -245,25 +313,14 @@ function LiveApp() {
     }
   }, [stopMedia]);
 
+  /** „Moje stoly“ zo servera; staré miesta z tohto prehliadača idú ako dôkaz pre archív. Platí len posledná odpoveď. */
   const loadMyTables = useCallback(async () => {
-    const saved = listSavedTables().slice(0, MAX_SUMMARY_REQUEST);
-    setLeftTables(saved.filter((table) => table.leftAt !== null).map((table) => table.code));
-    if (saved.length === 0) {
-      setMyTables([]);
+    const request = ++tablesRequest.current;
+    const response = await emit<AccountTablesResponse>('account:tables', { deviceSeats: deviceSeats() });
+    if (request !== tablesRequest.current || !response.ok || !response.data) {
       return;
     }
-    const response = await emit<{ summaries: TableSummary[]; missing: string[] }>('table:summaries', {
-      items: saved.map(({ code, playerId, token }) => ({ code, playerId, token })),
-    });
-    if (!response.ok || !response.data) {
-      setMyTables([]);
-      return;
-    }
-    for (const code of response.data.missing ?? []) {
-      saveSession(code, null);
-    }
-    const order = new Map(saved.map((table, index) => [table.code, index]));
-    setMyTables([...(response.data.summaries ?? [])].sort((left, right) => (order.get(left.code) ?? 0) - (order.get(right.code) ?? 0)));
+    setTables({ active: response.data.active ?? [], archived: response.data.archived ?? [] });
   }, []);
 
   useEffect(() => {
@@ -291,9 +348,12 @@ function LiveApp() {
       const current = joinedRef.current;
       const leaving = pendingLeave.current;
       pendingLeave.current = null;
+      if (!current && !leaving) {
+        // Stôl už je zatvorený (napr. po `session:replaced`) — oznámenie o prevzatí neprepíšeme.
+        return;
+      }
       if (kicked) {
         if (current) {
-          saveSession(current.code, null);
           saveRoomView(current.code, false);
         }
         joinedRef.current = null;
@@ -304,21 +364,17 @@ function LiveApp() {
         return;
       }
       const code = current?.code ?? leaving?.code;
-      if (code) {
-        markTableLeft(code);
-      }
       setError(null);
       closeTable();
       const name = viewRef.current ? `„${tableName(viewRef.current)}“` : (code ?? '');
       showNotice({ text: leaving?.notice ?? `Už nie si pri stole ${name} — žetóny ostávajú uložené, vrátiš sa cez „Moje stoly“.`, tone: 'info' });
     };
     const onDeleted = ({ code, byName }: TableDeletedPayload) => {
-      saveSession(code, null);
       const atTable = joinedRef.current?.code === code;
       const mine = deletingCode.current === code;
       deletingCode.current = null;
       const name = atTable && viewRef.current ? `„${tableName(viewRef.current)}“ (${code})` : code;
-      setMyTables((tables) => tables.filter((table) => table.code !== code));
+      setTables((current) => (current ? { ...current, active: current.active.filter((table) => table.code !== code) } : current));
       if (atTable) {
         pendingLeave.current = null;
         setError(null);
@@ -353,32 +409,53 @@ function LiveApp() {
       );
     };
     const onConnect = () => {
+      const previousSocketId = socketIdRef.current;
       setConnected(true);
       setSelfRtcId(socket.id ?? null);
       if (!joinedRef.current && pendingRef.current) {
         void resumePending(pendingRef.current.code);
       }
       const current = joinedRef.current;
-      // Odstavené okno sa samo nevracia — inak by po výpadku spojenia prebralo hráča späť a odstavilo to druhé.
-      if (current && !replacedRef.current) {
-        resume(current.code).then(({ ok }) => {
-          if (!ok) {
-            setJoined(null);
-            setView(null);
-            setError('Spojenie so stolom sa stratilo');
+      if (current) {
+        // Automatický návrat — ak stôl počas výpadku otvorilo iné zariadenie, server ho odmietne (žiadne preberanie späť).
+        resume(current.code, { reconnect: { previousSocketId } }).then(({ ok, error: failure }) => {
+          if (ok || joinedRef.current?.code !== current.code) {
+            return;
           }
+          const name = viewRef.current ? `„${tableName(viewRef.current)}“ (${current.code})` : current.code;
+          closeTable();
+          showNotice({ text: `Spojenie so stolom ${name} sa stratilo${failure ? ` — ${failure}` : ''}. Vrátiš sa cez „Moje stoly“.`, tone: 'info', persistent: true });
         });
       }
     };
     const onDisconnect = () => setConnected(false);
+    /** Ten istý účet otvoril tento stôl na inom zariadení — server nás od stola odpojil. Späť len ručne z „Moje stoly“. */
     const onReplaced = ({ code }: SessionReplacedPayload) => {
+      if (!joinedRef.current && pendingRef.current?.code === code) {
+        // Tú istú žiadosť o prístup otvorilo iné zariadenie — čaká tam; odtiaľto ju už späť nepreberáme.
+        savePendingJoin(code, null);
+        setPending(null);
+        setInviteCode(null);
+        setError(null);
+        if (window.location.pathname !== '/') {
+          window.history.pushState(null, '', '/');
+        }
+        showNotice({ text: `Žiadosť o prístup ku stolu ${code} čaká na inom zariadení.`, tone: 'info', persistent: true });
+        return;
+      }
       if (joinedRef.current?.code !== code) {
         return;
       }
-      replacedRef.current = true;
-      setReplaced(true);
-      // Mikrofón a kameru používa nové okno; tu ich vypneme (stav na serveri patrí novému oknu, preto bez player:update).
-      media.stopAll();
+      const name = viewRef.current ? `„${tableName(viewRef.current)}“ (${code})` : code;
+      pendingLeave.current = null;
+      setError(null);
+      // Mikrofón a kameru používa nové zariadenie; closeTable ich tu vypne (bez player:update — stav patrí novému zariadeniu).
+      closeTable();
+      showNotice({
+        text: `Pri stole ${name} hráš na inom zariadení. Ak chceš hrať tu, otvor ho v „Moje stoly“ — to druhé zariadenie sa odpojí.`,
+        tone: 'info',
+        persistent: true,
+      });
     };
     const onIce = ({ iceServers }: Pick<ClientConfig, 'iceServers'>) => {
       if (Array.isArray(iceServers)) {
@@ -415,16 +492,17 @@ function LiveApp() {
 
   useEffect(() => {
     const code = codeFromPath();
-    if (code && loadSession(code)) {
+    if (code && loadPendingJoin(code)) {
+      void resumePending(code).finally(() => setResuming(false));
+    } else if (code) {
+      // Člen stola sa vráti rovno (aj po obnovení stránky); inak ostane pozvánka s tlačidlom „Pripojiť sa“.
       resume(code)
         .then(({ ok, error: failure }) => {
-          if (!ok && failure && failure !== SESSION_EXPIRED) {
+          if (!ok && failure === NO_RESPONSE) {
             setError(failure);
           }
         })
         .finally(() => setResuming(false));
-    } else if (code && loadPendingJoin(code)) {
-      void resumePending(code).finally(() => setResuming(false));
     }
     const onPop = () => {
       setInviteCode(codeFromPath());
@@ -451,33 +529,66 @@ function LiveApp() {
     });
   };
 
+  const setTableError = (code: string, message: string) => setTableErrors((errors) => ({ ...errors, [code]: message }));
+
+  /** „Pokračovať“ z Moje stoly — otvorí čakáreň stola; ak stôl beží na inom zariadení, server ho tam odpojí. */
   const resumeSaved = async (code: string) => {
     setResumingCode(code);
     setError(null);
     clearTableError(code);
-    // „Pokračovať“ z Moje stoly otvorí čakáreň stola; ku stolu si hráč sadne sám tlačidlom „Späť ku stolu“.
+    // Ku stolu si hráč sadne sám tlačidlom „Späť ku stolu“.
     saveRoomView(code, true);
-    const result = await resume(code, true);
+    const result = await resume(code, { standing: true });
     setResumingCode(null);
     if (result.ok) {
       showNotice(null);
       return;
     }
     saveRoomView(code, false);
-    if (result.error && result.error !== SESSION_EXPIRED) {
-      setTableErrors((errors) => ({ ...errors, [code]: result.error! }));
-      return;
-    }
-    const name = myTables.find((table) => table.code === code)?.name;
-    showNotice({ text: `K stolu ${name ? `„${name}“` : code} sa už nedá vrátiť — stôl bol zmazaný alebo ťa host vyhodil.`, tone: 'danger' });
+    setTableError(code, result.error ?? 'K stolu sa nepodarilo vrátiť');
     void loadMyTables();
   };
 
-  const forgetSaved = (code: string) => {
-    saveSession(code, null);
+  const openArchive = async (code: string) => {
+    setResumingCode(code);
     clearTableError(code);
-    setMyTables((tables) => tables.filter((table) => table.code !== code));
+    const response = await emit<ArchivedTableView>('archive:view', { code, deviceSeats: deviceSeats(code) });
+    setResumingCode(null);
+    if (response.ok && response.data) {
+      const claimed = tables?.archived.find((table) => table.code === code)?.claimed ?? false;
+      setArchive({ view: response.data, claimed });
+    } else {
+      setTableError(code, response.error ?? 'Archív stola sa nepodarilo otvoriť');
+    }
   };
+
+  /** Prevezme staré miesta (z tohto prehliadača) do účtu — jeden stôl alebo všetky neprevzaté. */
+  const claimSeats = async (codes: string[], busyCode: string) => {
+    const seats = deviceSeats().filter((seat) => codes.includes(seat.code));
+    if (seats.length === 0 || claimingCode) {
+      return;
+    }
+    setClaimingCode(busyCode);
+    codes.forEach(clearTableError);
+    const response = await emit<ArchiveClaimResult>('archive:claim', { seats });
+    setClaimingCode(null);
+    if (!response.ok || !response.data) {
+      const message = response.error ?? 'Stôl sa nepodarilo prevziať';
+      codes.forEach((code) => setTableError(code, message));
+      return;
+    }
+    const { claimed, failed } = response.data;
+    for (const failure of failed ?? []) {
+      setTableError(failure.code, failure.error);
+    }
+    setArchive((current) => (current && claimed.includes(current.view.code) ? { ...current, claimed: true } : current));
+    void loadMyTables();
+  };
+
+  const unclaimedCodes = useMemo(() => {
+    const withSeat = new Set(deviceSeats().map((seat) => seat.code));
+    return (tables?.archived ?? []).filter((table) => !table.claimed && withSeat.has(table.code)).map((table) => table.code);
+  }, [tables]);
 
   const call = useCallback(
     async <T,>(event: string, payload?: unknown): Promise<Ack<T>> => {
@@ -493,7 +604,7 @@ function LiveApp() {
   const create = async (settings: Partial<TableSettings>) => {
     setBusy(true);
     setError(null);
-    const response = await emit<JoinResult>('table:create', { name: profile.name, avatar: profile.avatar, settings });
+    const response = await emit<JoinResult>('table:create', { settings });
     setBusy(false);
     if (response.ok && response.data) {
       enterTable(response.data);
@@ -502,33 +613,29 @@ function LiveApp() {
     }
   };
 
+  /** Pripojenie kódom / pozvánkou: člen stola je hneď pri ňom, inak vznikne žiadosť, ktorú schvaľuje host. */
   const join = async (code: string) => {
+    if (busy) {
+      return;
+    }
     setBusy(true);
     setError(null);
-    const hadSession = !!loadSession(code);
-    const resumed = await resume(code);
-    if (resumed.ok) {
-      setBusy(false);
-      return;
-    }
-    if (hadSession && resumed.error !== SESSION_EXPIRED) {
-      // Som členom stola (napr. po odchode) — nový hráč by vznikol navyše a o uložené žetóny by som prišiel.
-      setBusy(false);
-      setError(resumed.error ?? 'Nepodarilo sa vrátiť ku stolu');
-      return;
-    }
-    const response = await emit<PendingJoin>('table:join', { code, name: profile.name, avatar: profile.avatar });
+    const response = await emit<TableJoinResponse>('table:join', { code });
     setBusy(false);
-    if (response.ok && response.data) {
-      const request = response.data;
-      savePendingJoin(request.code, { requestId: request.requestId, token: request.token });
-      setPending(request);
-      setInviteCode(request.code);
-      if (codeFromPath() !== request.code) {
-        window.history.pushState(null, '', `/t/${request.code}`);
-      }
-    } else {
+    if (!response.ok || !response.data) {
       setError(response.error ?? 'Nepodarilo sa pripojiť');
+      return;
+    }
+    if ('joined' in response.data) {
+      enterTable(response.data.joined);
+      return;
+    }
+    const request = response.data.pending;
+    savePendingJoin(request.code, { requestId: request.requestId, token: request.token });
+    setPending(request);
+    setInviteCode(request.code);
+    if (codeFromPath() !== request.code) {
+      window.history.pushState(null, '', `/t/${request.code}`);
     }
   };
 
@@ -578,7 +685,6 @@ function LiveApp() {
     const leaving = pendingLeave.current;
     if (leaving) {
       pendingLeave.current = null;
-      markTableLeft(leaving.code);
       closeTable();
       showNotice({ text: leaving.notice, tone: 'info' });
     }
@@ -675,28 +781,6 @@ function LiveApp() {
           void call('host:kick', { playerId });
         }
       },
-      merge: async (fromId, toId) => {
-        if (!view) {
-          return;
-        }
-        const members = [...view.players, ...(view.departed ?? [])];
-        const from = members.find((member) => member.id === fromId);
-        const to = members.find((member) => member.id === toId);
-        if (!from || !to) {
-          return;
-        }
-        const chips = formatMoney(from.stack, view.settings.currency);
-        if (
-          await confirmDialog({
-            title: `Zlúčiť ${from.name} do ${to.name}?`,
-            message: `Všetko od hráča ${from.name} (žetóny ${chips}, transakcie, štatistiky, história) sa presunie na hráča ${to.name} a ${from.name} zo stola úplne zmizne.\nPouži, keď sa niekto pripojil z iného zariadenia ako nový hráč.`,
-            confirmLabel: 'Zlúčiť',
-            danger: true,
-          })
-        ) {
-          void call('host:merge', { fromId, toId });
-        }
-      },
       setAdmin: async (playerId: string, admin: boolean) => {
         const name = view?.players.find((player) => player.id === playerId)?.name ?? 'hráčovi';
         const prompt = admin
@@ -769,16 +853,6 @@ function LiveApp() {
     },
   };
 
-  /** „Pokračovať tu“: znova naviaže hráča na tento socket (server odstaví to druhé okno). */
-  const continueHere = async (): Promise<string | null> => {
-    const code = joinedRef.current?.code;
-    if (!code) {
-      return null;
-    }
-    const result = await resume(code);
-    return result.ok ? null : (result.error ?? 'Nepodarilo sa vrátiť ku stolu');
-  };
-
   const peers: MeshPeer[] = useMemo(
     () =>
       (view?.players ?? [])
@@ -787,7 +861,7 @@ function LiveApp() {
     [view],
   );
   const pushToTalk = usePushToTalk(media.stream, media.microphone, media.version);
-  const { streams } = useMesh(!!joined && !!view && !replaced, selfRtcId, peers, media.stream, media.version, config.iceServers);
+  const { streams } = useMesh(!!joined && !!view, selfRtcId, peers, media.stream, media.version, config.iceServers);
   const voiceSources = useMemo(() => {
     const sources = new Map<string, MediaStream>();
     if (!view) {
@@ -804,10 +878,6 @@ function LiveApp() {
     return sources;
   }, [view, streams, media.microphone, media.stream, media.version]);
   const speaking = useSpeakingIds(voiceSources);
-
-  if (joined && view && replaced) {
-    return <SessionReplacedScreen onContinue={continueHere} />;
-  }
 
   if (joined && view) {
     const isLocalhost = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
@@ -854,12 +924,29 @@ function LiveApp() {
     return <div className="loading-screen">Pripájam sa ku stolu…</div>;
   }
 
+  if (archive) {
+    const archiveCode = archive.view.code;
+    const canClaim = !archive.claimed && unclaimedCodes.includes(archiveCode);
+    return (
+      <>
+        <ConfirmHost />
+        <ArchiveScreen
+          view={archive.view}
+          claimed={archive.claimed}
+          onClaim={canClaim ? () => void claimSeats([archiveCode], archiveCode) : undefined}
+          claiming={claimingCode === archiveCode}
+          onClose={() => setArchive(null)}
+        />
+      </>
+    );
+  }
+
   return (
     <>
       <ConfirmHost />
       <Lobby
-        profile={profile}
-        onProfileChange={updateProfile}
+        account={account}
+        onOpenProfile={() => setProfileOpen(true)}
         inviteCode={inviteCode}
         busy={busy}
         error={error}
@@ -872,13 +959,16 @@ function LiveApp() {
         }}
         notice={notice}
         onDismissNotice={() => showNotice(null)}
-        leftTables={leftTables}
+        tables={tables}
         tableErrors={tableErrors}
-        myTables={myTables}
         resumingCode={resumingCode}
+        claimingCode={claimingCode}
         onResumeTable={(code) => void resumeSaved(code)}
-        onForgetTable={forgetSaved}
+        onOpenArchive={(code) => void openArchive(code)}
+        onClaim={(code) => void claimSeats([code], code)}
+        onClaimAll={unclaimedCodes.length > 1 ? () => void claimSeats(unclaimedCodes, '*') : undefined}
       />
+      {profileOpen && <ProfileDialog account={account} onClose={closeProfile} />}
     </>
   );
 }

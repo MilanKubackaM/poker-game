@@ -50,6 +50,8 @@ export interface JukeboxPreferences {
 }
 
 const DEFAULT_PREFS: JukeboxPreferences = { volume: 40, muted: false };
+/** Jukebox hrá najviac na polovicu hlasitosti YouTube — posuvník 100 % = 50 % prehrávača (hudba nemá prehlušiť hlasy pri stole). */
+export const JUKEBOX_MAX_PLAYER_VOLUME = 0.5;
 
 function loadPrefs(): JukeboxPreferences {
   try {
@@ -124,7 +126,7 @@ function applyVolume(): void {
   } else {
     player.unMute();
   }
-  player.setVolume(prefs.volume);
+  player.setVolume(Math.round(prefs.volume * JUKEBOX_MAX_PLAYER_VOLUME));
 }
 
 function setBlocked(blocked: boolean): void {

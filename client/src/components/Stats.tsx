@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { Currency, HandHistoryEntry, LeaderboardRow, MyHandRecord, Variant } from '../../../shared/types';
 import { formatMoney } from '../../../shared/money';
 import { useMyHands } from '../myHands';
+import { AvatarFace } from './AvatarPicker';
 import { Cashout, type CashoutProps } from './Cashout';
 import { FairnessBox } from './FairnessBox';
 import { PlayingCard } from './PlayingCard';
@@ -76,7 +77,8 @@ export function HistoryPanel({ history, currency, youId, tableCode }: { history:
   );
 }
 
-export function Leaderboard({ rows, currency, youId }: { rows: LeaderboardRow[]; currency: Currency; youId: string }) {
+/** `highlightIds` — ďalšie moje miesta (archív stola, kde som mohol sedieť viackrát); pri živom stole stačí `youId`. */
+export function Leaderboard({ rows, currency, youId, highlightIds = [] }: { rows: LeaderboardRow[]; currency: Currency; youId: string; highlightIds?: readonly string[] }) {
   const money = (cents: number, sign = false) => formatMoney(cents, currency, { sign });
   if (rows.length === 0) {
     return <div className="muted empty-note">Leaderboard sa naplní, keď si hráči prisadnú.</div>;
@@ -99,14 +101,14 @@ export function Leaderboard({ rows, currency, youId }: { rows: LeaderboardRow[];
           </thead>
           <tbody>
             {rows.map((row, index) => {
-              const classes = [row.present ? '' : 'lb-left', row.playerId === youId ? 'lb-me' : ''].filter(Boolean).join(' ');
+              const classes = [row.present ? '' : 'lb-left', row.playerId === youId || highlightIds.includes(row.playerId) ? 'lb-me' : ''].filter(Boolean).join(' ');
               return (
                 <tr key={row.playerId} className={classes || undefined}>
                   <td className="lb-rank">{index + 1}</td>
                   <th scope="row" className="lb-player">
                     <span className="lb-player-inner">
                       <span className="lb-avatar" style={{ background: row.avatar.color }} aria-hidden>
-                        {row.avatar.emoji}
+                        <AvatarFace avatar={row.avatar} />
                       </span>
                       <span className="lb-name">{row.playerName}</span>
                       {!row.present && (
@@ -226,7 +228,7 @@ export function HandHistory({ history, currency }: { history: HandHistoryEntry[]
 }
 
 /** Moje karty a môj výsledok v ruke (len z `history:mine` — cudzie skryté karty sa sem nikdy nedostanú). */
-function MyHandRow({ record, currency }: { record: MyHandRecord | undefined; currency: Currency }) {
+export function MyHandRow({ record, currency }: { record: MyHandRecord | undefined; currency: Currency }) {
   if (!record) {
     return null;
   }
