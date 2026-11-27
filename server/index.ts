@@ -19,7 +19,7 @@ import { CloudflareIceFile } from './cloudflareTurn';
 import { CloudflareUsageFile } from './cloudflareUsage';
 import { createJukeboxHub } from './jukeboxSocket';
 import { NetStatsStore, statsAccess } from './NetStats';
-import { APP_VERSION, type ServerVersionPayload } from '../shared/version';
+import { APP_VERSION, buildFingerprint, htmlAssetUrls, type ServerVersionPayload } from '../shared/version';
 import { SessionManager } from './SessionManager';
 import type { JoinRequest, Table, TablePlayer } from './Table';
 import { AccountService } from './accounts/AccountService';
@@ -30,6 +30,8 @@ const HTTP_PORT = Number(process.env.PORT ?? 3000);
 const HTTPS_PORT = process.env.HTTPS_PORT === '0' ? null : Number(process.env.HTTPS_PORT ?? 3443);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const STATIC_DIR = process.env.STATIC_DIR ?? path.resolve(here, 'client');
+/** Odtlačok servovaného buildu klienta — klient s iným (otvorený pred nasadením) ponúkne obnovenie aj bez novej verzie. */
+const CLIENT_BUILD = readClientBuild();
 const DATA_DIR = path.resolve(process.env.DATA_DIR || 'data');
 const TRUST_PROXY = trustProxyFromEnv();
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? '').split(',').map((origin) => origin.trim()).filter(Boolean);
@@ -618,7 +620,7 @@ function context(socket: GameSocket): { table: Table; player: TablePlayer } | nu
 io.on('connection', (rawSocket) => {
   const socket = rawSocket as GameSocket;
   // Klient so starým kódom (otvorený pred nasadením) ponúkne obnovenie stránky.
-  socket.emit('server:version', { version: APP_VERSION } satisfies ServerVersionPayload);
+  socket.emit('server:version', { version: APP_VERSION, ...(CLIENT_BUILD ? { build: CLIENT_BUILD } : {}) } satisfies ServerVersionPayload);
 
   const ip = socket.data.ip ?? 'unknown';
   const events = new TokenBucket(LIMITS.eventsPerSecond, LIMITS.eventsBurst);
@@ -1258,3 +1260,11 @@ process.once('SIGINT', () => shutdown('SIGINT'));
 startHttps().catch((error) => {
   console.error('HTTPS server sa nepodarilo spustiť', error);
 });
+
+function readClientBuild(): string | null {
+  try {
+    return buildFingerprint(htmlAssetUrls(readFileSync(path.join(STATIC_DIR, 'index.html'), 'utf8')));
+  } catch {
+    return null;
+  }
+}

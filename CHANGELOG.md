@@ -44,6 +44,8 @@
 - The host turns it on for a number of hands or permanently, or turns it off, in Host → Game. Before the first such hand
   everyone sees the rules.
 - Double Board hands have no run-it-twice vote and no board reveal. Both boards are covered by the shuffle proofs.
+- The winner of each board is shown right next to that board, with the amount won. The same applies to every run when
+  an all-in is run twice or three times. On a phone the winner is shown under the board.
 
 **Jukebox**
 - The jukebox now plays at most at half the previous volume, so 100 % on the slider is 50 % of the player. Voices
@@ -96,6 +98,8 @@
 - Host ho zapne na počet rúk alebo natrvalo, prípadne ho vypne, v Host → Hra. Pred prvou takou rukou sa všetkým ukážu
   pravidlá.
 - V Double Board rukách sa nehlasuje o viacerých behoch ani sa neodkrýva board. Oba boardy sú v dôkazoch miešania.
+- Víťaz každého boardu je napísaný hneď vedľa neho aj s výhrou. Rovnako pri každom behu, keď sa all-in ide dvakrát
+  alebo trikrát. Na telefóne je víťaz pod boardom.
 
 **Jukebox**
 - Jukebox hrá najviac na polovicu doterajšej hlasitosti, takže 100 % na posuvníku je 50 % prehrávača. Hlasy pri

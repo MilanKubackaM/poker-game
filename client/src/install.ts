@@ -52,7 +52,7 @@ function writeInstalledFlag(installed: boolean): void {
   }
 }
 
-function runsAsInstalledApp(): boolean {
+export function runsAsInstalledApp(): boolean {
   return window.matchMedia('(display-mode: standalone)').matches || (navigator as Navigator & { standalone?: boolean }).standalone === true;
 }
 

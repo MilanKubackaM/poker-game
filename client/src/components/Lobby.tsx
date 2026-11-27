@@ -5,6 +5,7 @@ import { CURRENCIES, CURRENCY_LABELS, DEFAULT_SETTINGS, MAX_TABLE_NAME_LENGTH, V
 import { promptInstall, useInstallOffer } from '../install';
 import type { InstallGuideId } from '../installGuide';
 import { InstallGuideDialog } from './InstallGuide';
+import { inviteCodeFromInput } from '../inviteCode';
 import { checkMoneyRules, moneyRulesDraft, type MoneyRulesDraft } from '../moneyRules';
 import { AvatarBadge } from './AvatarPicker';
 import { MoneyInput } from './MoneyInput';
@@ -209,10 +210,16 @@ export function Lobby(props: LobbyProps) {
               <input
                 className="code-input"
                 value={code}
-                maxLength={6}
                 placeholder="ABC123"
-                onChange={(event) => setCode(event.target.value.toUpperCase())}
+                autoComplete="off"
+                autoCapitalize="characters"
+                spellCheck={false}
+                aria-describedby="join-code-hint"
+                onChange={(event) => setCode(inviteCodeFromInput(event.target.value))}
               />
+              <small id="join-code-hint" className="field-hint">
+                Kód alebo celý odkaz pozvánky
+              </small>
             </label>
             <button className="btn btn-secondary btn-block" disabled={busy || code.trim().length < 4}>
               Pripojiť sa ku stolu

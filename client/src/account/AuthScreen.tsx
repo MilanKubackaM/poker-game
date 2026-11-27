@@ -2,6 +2,8 @@ import { useState, type FormEvent } from 'react';
 import { EMAIL_MAX_LENGTH, PASSWORD_MAX_LENGTH, USERNAME_MAX_LENGTH, cleanEmail, cleanUsername, validateEmail, validatePassword, validateUsername, type AuthSession } from '../../../shared/account';
 import { emit } from '../socket';
 import { VersionTag } from '../components/UpdateBanner';
+import { useCopyInvite } from '../components/TableTopbar';
+import { runsAsInstalledApp } from '../install';
 import { PasswordField, TextField, confirmError, useFieldTouch } from './fields';
 import { clearAuthNotice, signIn } from './session';
 import './account.css';
@@ -50,6 +52,7 @@ export function AuthScreen({ inviteCode, notice }: AuthScreenProps) {
           </span>
         </div>
       )}
+      {inviteCode && !runsAsInstalledApp() && <OpenInAppHint code={inviteCode} />}
       {notice && (
         <div className="lobby-notice lobby-notice-danger" role="alert">
           <span className="lobby-notice-text">{notice}</span>
@@ -83,6 +86,25 @@ export function AuthScreen({ inviteCode, notice }: AuthScreenProps) {
       <footer className="lobby-footer">
         <VersionTag />
       </footer>
+    </div>
+  );
+}
+
+/**
+ * Odkaz pozvánky sa na iPhone vždy otvorí v prehliadači (appka z plochy si odkazy neberie a nemá spoločné prihlásenie
+ * s prehliadačom); na Androide podobne z vstavaného prehliadača Messengera či Instagramu. Hráč s nainštalovanou
+ * appkou si tu skopíruje kód a zadá ho v appke.
+ */
+function OpenInAppHint({ code }: { code: string }) {
+  const { copied, copy } = useCopyInvite(code);
+  return (
+    <div className="lobby-notice open-in-app-hint">
+      <span className="lobby-notice-text">
+        Máš Poker Night v mobile ako appku? Otvor ju a v časti „Pripojiť sa“ zadaj kód <strong>{code}</strong> — v appke už prihlásený si.
+      </span>
+      <button type="button" className="btn btn-secondary btn-small" onClick={() => void copy()}>
+        {copied ? 'Skopírované' : 'Kopírovať kód'}
+      </button>
     </div>
   );
 }

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { Card, PlayerAction, ReturnMode, RunVoteView, SeatPlayerView, TableEvent, TableView, WinnerView } from '../../../shared/types';
+import type { Card, PlayerAction, ReturnMode, RunVoteView, SeatPlayerView, TableEvent, TableView } from '../../../shared/types';
 import { MAX_SEATS, VARIANT_LABELS } from '../../../shared/constants';
 import { formatMoney } from '../../../shared/money';
+import { boardWinners, type BoardWinner } from '../boardWinners';
 import type { ChatToastItem } from '../hooks/useChatToasts';
 import { SIDE_PANEL_DOCKED_QUERY, useMediaQuery } from '../hooks/useMediaQuery';
 import { useNow } from '../hooks/useNow';
@@ -397,22 +398,18 @@ export function TableScreen(props: TableScreenProps) {
   const discardSeconds = hand?.discardDeadline ? Math.max(0, Math.ceil((hand.discardDeadline - now) / 1000)) : null;
   const winnerNames = result?.winners.map((winner) => view.players.find((player) => player.id === winner.playerId)?.name ?? '?') ?? [];
   const uniqueWinnerNames = [...new Set(winnerNames)];
-  const runWinners: string[][] = [];
-  for (const winner of result?.winners ?? []) {
-    if (winner.run === undefined) {
-      continue;
-    }
-    const name = view.players.find((player) => player.id === winner.playerId)?.name ?? '?';
-    runWinners[winner.run] ??= [];
-    if (!runWinners[winner.run].includes(name)) {
-      runWinners[winner.run].push(name);
-    }
-  }
   const bountyWinner = result?.bounty ? view.players.find((player) => player.id === result.bounty!.winnerId) : null;
-  const boardResults = doubleBoard ? doubleBoardResults(result?.winners ?? [], view.players) : null;
+  const runCount = 1 + (hand?.extraBoards?.length ?? 0);
+  /** Víťazi pri každom boarde (Double Board) alebo behu (all-in viackrát) — ukazujú sa vedľa daného boardu. */
+  const boardWinnerRows = !result ? null : doubleBoard ? boardWinners(result.winners, view.players, (winner) => winner.board, 2) : runCount > 1 ? boardWinners(result.winners, view.players, (winner) => winner.run, runCount) : null;
+  const boardResults = doubleBoard ? boardWinnerRows : null;
   /** Scoop = jeden hráč vyhral oba boardy (celý bank). */
-  const scoopName = boardResults && boardResults[0].names.length === 1 && boardResults[1].names.length === 1 && boardResults[0].ids[0] === boardResults[1].ids[0] ? boardResults[0].names[0] : null;
-  const boardSplit = !!boardResults && boardResults[0].names.length > 0 && boardResults[1].names.length > 0;
+  const scoopName = boardResults && boardResults[0].length === 1 && boardResults[1].length === 1 && boardResults[0][0].id === boardResults[1][0].id ? boardResults[0][0].name : null;
+  const boardSplit = !!boardResults && boardResults[0].length > 0 && boardResults[1].length > 0;
+  const boardWinnerTag = (index: number, tone: 'top' | 'bottom') => {
+    const winners = boardWinnerRows?.[index];
+    return winners && winners.length > 0 ? <BoardWinnerTag winners={winners} tone={tone} money={money} /> : null;
+  };
 
   return (
     <div className="table-screen">
@@ -474,50 +471,59 @@ export function TableScreen(props: TableScreenProps) {
                 {draw && <DrawBanner draw={draw} players={view.players} />}
                 <div className="felt-logo">POKER NIGHT</div>
                 {feltStatus && <div className="felt-status">{feltStatus}</div>}
-                <div className={draw ? 'board board-hidden' : doubleBoard ? 'board board-double board-top' : 'board'} aria-label={doubleBoard ? 'Vrchný board' : undefined}>
-                  {doubleBoard && (
-                    <span className="board-double-label" title="Vrchný board" aria-hidden>
-                      1
-                    </span>
-                  )}
-                  {Array.from({ length: 5 }, (_, index) => {
-                    const card = hand?.board[index];
-                    const highlighted = !!card && boardHighlights[0].has(card);
-                    const rabbitCard = !card && rabbitShown && hand ? rabbit!.cards[index - hand.board.length] : undefined;
-                    if (card) {
-                      return <PlayingCard key={index} card={card} size="md" highlight={highlighted} />;
-                    }
-                    return rabbitCard ? (
-                      <div key={index} className="rabbit-card">
-                        <PlayingCard card={rabbitCard} size="md" />
-                      </div>
-                    ) : (
-                      <div key={index} className="card-slot" />
-                    );
-                  })}
+                <div className="board-slot">
+                  <div className={draw ? 'board board-hidden' : doubleBoard ? 'board board-double board-top' : 'board'} aria-label={doubleBoard ? 'Vrchný board' : runCount > 1 ? '1. beh' : undefined}>
+                    {doubleBoard && (
+                      <span className="board-double-label" title="Vrchný board" aria-hidden>
+                        1
+                      </span>
+                    )}
+                    {Array.from({ length: 5 }, (_, index) => {
+                      const card = hand?.board[index];
+                      const highlighted = !!card && boardHighlights[0].has(card);
+                      const rabbitCard = !card && rabbitShown && hand ? rabbit!.cards[index - hand.board.length] : undefined;
+                      if (card) {
+                        return <PlayingCard key={index} card={card} size="md" highlight={highlighted} />;
+                      }
+                      return rabbitCard ? (
+                        <div key={index} className="rabbit-card">
+                          <PlayingCard card={rabbitCard} size="md" />
+                        </div>
+                      ) : (
+                        <div key={index} className="card-slot" />
+                      );
+                    })}
+                  </div>
+                  {!draw && boardWinnerTag(0, 'top')}
                 </div>
                 {doubleBoard && (
-                  <div className="board board-double board-bottom" aria-label="Spodný board">
-                    <span className="board-double-label" title="Spodný board" aria-hidden>
-                      2
-                    </span>
-                    {Array.from({ length: 5 }, (_, index) => {
-                      const card = hand?.secondBoard?.[index];
-                      return card ? <PlayingCard key={index} card={card} size="md" highlight={boardHighlights[1].has(card)} /> : <div key={index} className="card-slot" />;
-                    })}
+                  <div className="board-slot">
+                    <div className="board board-double board-bottom" aria-label="Spodný board">
+                      <span className="board-double-label" title="Spodný board" aria-hidden>
+                        2
+                      </span>
+                      {Array.from({ length: 5 }, (_, index) => {
+                        const card = hand?.secondBoard?.[index];
+                        return card ? <PlayingCard key={index} card={card} size="md" highlight={boardHighlights[1].has(card)} /> : <div key={index} className="card-slot" />;
+                      })}
+                    </div>
+                    {boardWinnerTag(1, 'bottom')}
                   </div>
                 )}
                 {hand?.extraBoards?.map((board, run) => (
-                  <div key={run} className="board board-run" aria-label={`${run + 2}. beh`}>
-                    <span className="board-run-label">{run + 2}.</span>
-                    {Array.from({ length: 5 }, (_, index) => {
-                      const card = board[index];
-                      if (index < (hand.runoutBase ?? 0)) {
-                        return <div key={index} className="card-slot card-slot-shared" />;
-                      }
-                      const highlighted = !!card && boardHighlights[0].has(card);
-                      return card ? <PlayingCard key={index} card={card} size="md" highlight={highlighted} /> : <div key={index} className="card-slot" />;
-                    })}
+                  <div key={run} className="board-slot">
+                    <div className="board board-run" aria-label={`${run + 2}. beh`}>
+                      <span className="board-run-label">{run + 2}.</span>
+                      {Array.from({ length: 5 }, (_, index) => {
+                        const card = board[index];
+                        if (index < (hand.runoutBase ?? 0)) {
+                          return <div key={index} className="card-slot card-slot-shared" />;
+                        }
+                        const highlighted = !!card && boardHighlights[0].has(card);
+                        return card ? <PlayingCard key={index} card={card} size="md" highlight={highlighted} /> : <div key={index} className="card-slot" />;
+                      })}
+                    </div>
+                    {boardWinnerTag(run + 1, 'top')}
                   </div>
                 ))}
                 {runVote && <RunVotePanel vote={runVote} players={view.players} youId={view.youId} secondsLeft={Math.max(0, Math.ceil((runVote.deadline - now) / 1000))} onChoose={handlers.onRuns} />}
@@ -535,17 +541,9 @@ export function TableScreen(props: TableScreenProps) {
                 )}
                 {hand?.street === 'discard' && discardSeconds !== null && <div className="pot">Zahadzovanie… {discardSeconds} s</div>}
                 {piggy && !draw && <PiggyBank piggy={piggy} currency={currency} participants={piggyParticipants} />}
-                {result && boardResults && boardSplit && (
+                {result && boardResults && boardSplit && (scoopName || bountyWinner) && (
                   <div className={scoopName ? 'result-banner result-scoop' : 'result-banner'}>
-                    <div className="result-title">{scoopName ? <>Scoop! {scoopName} berie celý bank</> : 'Bank sa delí medzi boardy'}</div>
-                    <ul className="result-boards">
-                      {boardResults.map((board, index) => (
-                        <li key={index} className={index === 0 ? 'result-board top' : 'result-board bottom'}>
-                          <span className="result-board-label">{index === 0 ? 'Vrchný' : 'Spodný'}:</span> <strong>{board.names.join(' & ')}</strong>{board.names.length > 1 && ' delia'} <span className="result-board-amount">+{money(board.amount)}</span>
-                          {board.handDescription && <span className="result-board-hand"> · {board.handDescription}</span>}
-                        </li>
-                      ))}
-                    </ul>
+                    {scoopName && <div className="result-title">Scoop! {scoopName} berie celý bank</div>}
                     {bountyWinner && (
                       <div className="result-bounty">
                         7-2! {bountyWinner.name} inkasuje bonus {money(result.bounty!.total)}
@@ -558,12 +556,7 @@ export function TableScreen(props: TableScreenProps) {
                     <div className="result-title">
                       {uniqueWinnerNames.join(' & ')} {uniqueWinnerNames.length > 1 ? 'delia pot' : 'vyhráva'}
                     </div>
-                    {runWinners.length > 1 && (
-                      <div className="result-hand">
-                        {runWinners.map((names, run) => `${run + 1}. beh: ${names.join(' & ')}`).join(' · ')}
-                      </div>
-                    )}
-                    {result.winners[0]?.handDescription && <div className="result-hand">{result.winners[0].handDescription}</div>}
+                    {!boardWinnerRows && result.winners[0]?.handDescription && <div className="result-hand">{result.winners[0].handDescription}</div>}
                     {result.wonWithoutShowdown && <div className="result-hand">ostatní zložili karty</div>}
                     {bountyWinner && (
                       <div className="result-bounty">
@@ -727,36 +720,21 @@ export function cashoutProps(view: TableView, bank: BankActions | undefined): St
   };
 }
 
+/** Kto vyhral daný board / beh — štítok hneď vedľa boardu (na úzkom stole pod ním). */
+function BoardWinnerTag({ winners, tone, money }: { winners: BoardWinner[]; tone: 'top' | 'bottom'; money: (cents: number) => string }) {
+  return (
+    <div className={`board-winner ${tone}`}>
+      {winners.map((winner) => (
+        <div key={winner.id} className="board-winner-line" title={winner.handDescription ?? undefined}>
+          <span className="board-winner-name">{winner.name}</span> <span className="board-winner-amount">+{money(winner.amount)}</span>
+          {winner.handDescription && <span className="board-winner-hand">{winner.handDescription}</span>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** Po all-in: hráči v ruke volia 1×/2×/3×; ostatní vidia priebeh. Platí najmenšia voľba. */
-/** Výsledok jedného boardu pri Double Board: víťazi (pri remíze viacerí), spolu vyhraté a popis kombinácie. */
-interface BoardResult {
-  ids: string[];
-  names: string[];
-  amount: number;
-  handDescription: string | null;
-}
-
-/** Rozdelí víťazov ruky podľa boardu (`winner.board`); víťazi bez boardu (ruka bez showdownu) sa nerátajú. */
-export function doubleBoardResults(winners: WinnerView[], players: SeatPlayerView[]): [BoardResult, BoardResult] {
-  const boards: [BoardResult, BoardResult] = [
-    { ids: [], names: [], amount: 0, handDescription: null },
-    { ids: [], names: [], amount: 0, handDescription: null },
-  ];
-  for (const winner of winners) {
-    if (winner.board === undefined) {
-      continue;
-    }
-    const board = boards[winner.board];
-    board.amount += winner.amount;
-    board.handDescription ??= winner.handDescription;
-    if (!board.ids.includes(winner.playerId)) {
-      board.ids.push(winner.playerId);
-      board.names.push(players.find((player) => player.id === winner.playerId)?.name ?? '?');
-    }
-  }
-  return boards;
-}
-
 function RunVotePanel({ vote, players, youId, secondsLeft, onChoose }: { vote: RunVoteView; players: SeatPlayerView[]; youId: string; secondsLeft: number; onChoose: (runs: number) => void }) {
   const participant = vote.participants.includes(youId);
   const mine = vote.choices[youId];
