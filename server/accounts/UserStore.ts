@@ -6,6 +6,7 @@ import { cleanEmail, usernameKey, type AccountTableStat } from '../../shared/acc
 export const USERS_FILE_VERSION = 1;
 /** Najviac súčasných prihlásení jedného účtu — pri ďalšom sa zahodí najstaršie. */
 export const MAX_SESSIONS = 20;
+export const MAX_COACH_SESSIONS = 5;
 const SAVE_DELAY_MS = 1000;
 
 export interface UserSession {
@@ -13,6 +14,8 @@ export interface UserSession {
   hash: string;
   createdAt: number;
   lastSeenAt: number;
+  /** `coach` = prihlásenie pomocnej aplikácie (len čítanie cez coach API). Chýba pri bežnom prihlásení — staršie záznamy ostávajú plnohodnotné. */
+  scope?: 'coach';
 }
 
 export interface OneTimeToken {

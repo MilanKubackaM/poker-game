@@ -37,6 +37,8 @@ services:
       STATS_TOKEN: "${STATS_TOKEN:-}"
       # Verejná adresa hry pre odkazy v e-mailoch (overenie e-mailu, obnovenie hesla) — doplní ensure-env.sh
       PUBLIC_URL: "${PUBLIC_URL:-}"
+      # Pomocná aplikácia Coach (zatiaľ len lokálne testovanie na Macu); pri zverejnení sem pribudne jej verejná adresa
+      COACH_ORIGINS: "${COACH_ORIGINS:-http://localhost:5180,http://127.0.0.1:5180}"
       # E-maily hra len zapíše do outboxu; odošle ich sidecar „mailer“ (hra nemá prístup na internet ani k heslu Gmailu)
       MAIL_OUTBOX_DIR: /app/outbox
       MAIL_FROM: "Poker Night <${GMAIL_USER:-}>"

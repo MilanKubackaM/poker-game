@@ -168,6 +168,7 @@ Demo obrazovky s ukážkovými dátami (bez servera): `http://localhost:5173/?de
 | `STATS_TOKEN` | – | kľúč k stránke `/stats`; bez neho je v produkcii vypnutá, pri vývoji otvorená |
 | `PUBLIC_URL` | `http://localhost:5173` | verejná adresa hry pre odkazy v e-mailoch (overenie, obnovenie hesla) |
 | `MAIL_OUTBOX_DIR` | – | priečinok, kam server zapíše e-maily pre odosielací sidecar; bez neho sa e-maily len vypíšu do logu |
+| `COACH_ORIGINS` | – | adresy prehliadačových pomocných aplikácií (čiarkou), ktoré smú otvoriť coach socket (`/coach-io`); herný socket sa tým nerozširuje. Pozri [COACH-API.md](COACH-API.md) |
 | `MAIL_FROM` | – | hlavička odosielateľa, napr. `Poker Night <hra@gmail.com>` (pri Gmaile musí sedieť s `GMAIL_USER`) |
 
 ## Sieťové štatistiky (`/stats`)

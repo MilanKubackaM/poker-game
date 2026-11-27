@@ -21,6 +21,8 @@ export type PhotoMimeType = (typeof PHOTO_MIME_TYPES)[number];
 export const VERIFY_TOKEN_TTL_MS = 48 * 60 * 60 * 1000;
 export const RESET_TOKEN_TTL_MS = 60 * 60 * 1000;
 export const SESSION_TTL_MS = 180 * 24 * 60 * 60 * 1000;
+/** Prihlásenie pomocnej aplikácie (coach) platí kratšie než bežné a predlžuje sa používaním. */
+export const COACH_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 /** Písmená (aj s diakritikou), číslice, medzera, podčiarkovník, pomlčka, bodka — bez @, aby sa nepomýlilo s e-mailom. */
 const USERNAME_PATTERN = /^[\p{L}\p{N}_.\- ]+$/u;

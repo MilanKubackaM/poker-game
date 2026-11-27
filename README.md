@@ -29,6 +29,7 @@ independent reviewer (human or AI) can audit each claim.
 | Can a player see another player's cards? | **No.** | The server sends each player only their own cards. Other players' cards arrive as `null` until they are shown ([`Table.liveView`](server/Table.ts)). |
 | Can anyone add chips without everyone seeing it? | **Not secretly.** | Chips change only through the banker, and every change is a public event in the ledger and the chat. A credit counts as a deposit, so it is subtracted from that player's result in the cash-out ([`Table.bankChips`](server/Table.ts), [`shared/settlement.ts`](shared/settlement.ts)). Every stack is visible to the whole table at all times. |
 | Can the operator see players' hole cards during a hand? | **Technically yes. This is the one place where you trust the operator.** | See [The trust gap](#the-trust-gap). |
+| Can a helper app see more than the player does? | **No.** | The [coach API](docs/COACH-API.md) is read-only, needs the player's own account, and is built from the same `Table.liveView` the player's screen uses ([`server/coach/project.ts`](server/coach/project.ts)). It never receives other players' hidden cards or the server seed before the game ends. |
 | Is the web page I run the published code? | **You can verify it.** | [`tools/verify-client.ts`](tools/verify-client.ts) compares the files the server sends you with a build of this repository. |
 
 ## What the server knows, by design

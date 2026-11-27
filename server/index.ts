@@ -25,6 +25,8 @@ import type { JoinRequest, Table, TablePlayer } from './Table';
 import { AccountService } from './accounts/AccountService';
 import type { AccountProfile } from './accounts/directory';
 import { createAccountHub } from './accountSocket';
+import { CoachHub } from './coach/CoachHub';
+import { createPublicIds, loadCoachSecret } from './coach/publicId';
 
 const HTTP_PORT = Number(process.env.PORT ?? 3000);
 const HTTPS_PORT = process.env.HTTPS_PORT === '0' ? null : Number(process.env.HTTPS_PORT ?? 3443);
@@ -35,6 +37,8 @@ const CLIENT_BUILD = readClientBuild();
 const DATA_DIR = path.resolve(process.env.DATA_DIR || 'data');
 const TRUST_PROXY = trustProxyFromEnv();
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? '').split(',').map((origin) => origin.trim()).filter(Boolean);
+/** Adresy prehliadačových pomocných aplikácií (Coach), ktoré smú otvoriť coach socket — herný socket sa tým nerozširuje. */
+const COACH_ORIGINS = (process.env.COACH_ORIGINS ?? '').split(',').map((origin) => origin.trim()).filter(Boolean);
 const RATE_LIMITED = 'Príliš veľa požiadaviek — chvíľu počkaj';
 const JOIN_EXPIRED = 'Žiadosť o prístup už neplatí — požiadaj o prístup znova';
 const STATS_TOKEN = process.env.STATS_TOKEN ?? '';
@@ -191,6 +195,8 @@ const manager = new SessionManager({
 }, { dataDir: DATA_DIR, accounts });
 console.log(`Dáta stolov: ${DATA_DIR} (načítaných stolov: ${manager.count()}, v archíve: ${manager.archivedCount()})`);
 
+let coachHub: CoachHub | undefined;
+
 const accountHub = createAccountHub(io, accounts, {
   // Nové meno / avatar / fotka účtu → pri všetkých stoloch, kde je členom (všetci pri stole to hneď vidia).
   onProfileChanged(userId: string) {
@@ -201,6 +207,7 @@ const accountHub = createAccountHub(io, accounts, {
   },
   // Zrušené prihlásenia (reset / zmena hesla) — tie spojenia sa od stolov odpoja.
   onSessionsRevoked(userId: string, exceptSocketId: string | null) {
+    coachHub?.revokeUser(userId);
     for (const rawSocket of io.sockets.sockets.values()) {
       const socket = rawSocket as GameSocket;
       if (socket.data.userId === userId && socket.id !== exceptSocketId) {
@@ -216,6 +223,16 @@ const accountHub = createAccountHub(io, accounts, {
   },
 });
 io.use(accountHub.middleware);
+
+coachHub = new CoachHub({
+  httpServer,
+  accounts,
+  manager,
+  ids: createPublicIds(loadCoachSecret(DATA_DIR)),
+  serverVersion: APP_VERSION,
+  allowedOrigins: COACH_ORIGINS,
+  trustProxy: TRUST_PROXY,
+});
 
 const netStats = new NetStatsStore(DATA_DIR);
 netStats.prune();
@@ -295,6 +312,7 @@ function broadcastMeta(table: Table): void {
 function broadcastState(table: Table): void {
   broadcastMeta(table);
   jukebox.tableChanged(table);
+  coachHub?.tableChanged(table);
   for (const player of table.players.values()) {
     for (const socketId of player.sockets) {
       io.sockets.sockets.get(socketId)?.emit('table:state', table.liveView(player.id));
@@ -322,6 +340,7 @@ function deleteTable(table: Table, byName: string): void {
   pendingBroadcast.delete(table);
   jukebox.tableRemoved(table);
   manager.remove(table.code);
+  coachHub?.tableRemoved(table.code);
   console.log(`Stôl ${table.code} zmazal zakladateľ ${byName}`);
 }
 
@@ -1235,6 +1254,7 @@ async function startHttps(): Promise<void> {
   }
   const httpsServer = createHttpsServer({ key, cert }, app);
   io.attach(httpsServer);
+  coachHub?.io.attach(httpsServer);
   await new Promise<void>((resolve) => httpsServer.listen(HTTPS_PORT, '0.0.0.0', resolve));
   console.log(`HTTPS: https://localhost:${HTTPS_PORT}`);
 }

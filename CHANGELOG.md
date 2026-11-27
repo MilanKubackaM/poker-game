@@ -1,5 +1,49 @@
 # Changelog
 
+## v1.3.0 — 2026-11-27
+
+### English
+
+**Coach API**
+- Poker Night now has a read-only interface for helper apps. A helper logs in with the player's account and sees
+  exactly what the player sees at the table: the player's cards, the board, every bet and the active game modes. It
+  cannot play, change anything or see hidden cards.
+- Connecting a helper does not disconnect the player's phone or another device from the table.
+- After the game, a helper can fetch the shuffle proofs, so it can rebuild every hand, folded ones included, once the
+  server seed has been published (the same moment as for the verifier).
+- The game itself looks and plays the same. The interface is documented in `docs/COACH-API.md`.
+
+**Also in this version**
+- The winner of each board is shown next to that board (Double Board and every run of run-it-twice).
+- The join field accepts the invite code or the whole invite link, and an invite link opened in a browser tells players
+  who installed the app to enter the code there.
+- After an update, an open page offers a reload even when the version number did not change.
+
+**Server**
+- New setting `COACH_ORIGINS` for the addresses of browser helper apps. The helper socket is separate from the game
+  socket, so allowing a helper does not open the game socket.
+
+### Slovensky
+
+**API pre pomocníka**
+- Poker Night má nové rozhranie len na čítanie pre pomocné aplikácie. Pomocník sa prihlási účtom hráča a vidí
+  presne to isté, čo hráč pri stole: karty hráča, board, všetky stávky a zapnuté módy. Nemôže hrať, nič meniť
+  ani vidieť skryté karty.
+- Pripojenie pomocníka neodpojí hráčov mobil ani iné zariadenie od stola.
+- Po hre si pomocník vie stiahnuť dôkazy miešania, takže po zverejnení semienka servera (v rovnakej chvíli ako pre
+  overovací skript) dokáže zložiť každú ruku vrátane zahodených.
+- Samotná hra vyzerá a hrá sa rovnako. Rozhranie je popísané v `docs/COACH-API.md`.
+
+**Ďalšie v tejto verzii**
+- Víťaz každého boardu je napísaný vedľa neho (Double Board aj každý beh pri dvoch či troch behoch).
+- Pole na pripojenie prijme kód pozvánky aj celý odkaz a odkaz otvorený v prehliadači pripomenie hráčom s nainštalovanou
+  appkou, že kód majú zadať v nej.
+- Po aktualizácii ponúkne otvorená stránka obnovenie, aj keď sa číslo verzie nezmenilo.
+
+**Server**
+- Nové nastavenie `COACH_ORIGINS` pre adresy prehliadačových pomocných aplikácií. Socket pomocníka je oddelený od
+  herného, takže povolenie pomocníka herný socket neotvára.
+
 ## v1.2.0 — 2026-11-07
 
 ### English

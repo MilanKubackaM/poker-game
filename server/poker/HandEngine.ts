@@ -67,6 +67,31 @@ export interface EngineLog {
 
 export type ActResult = { ok: true } | { ok: false; error: string };
 
+export type EngineActionType = 'sb' | 'bb' | 'return-blind' | 'fold' | 'check' | 'call' | 'bet' | 'raise' | 'discard' | 'uncalled';
+
+/**
+ * Štruktúrovaný záznam jednej akcie ruky (pre pomocné aplikácie cez coach API). Poradie určuje `seq` (od 1 v rámci ruky).
+ * Nenesie žiadne karty — ani zahodenú kartu v Pineapple.
+ */
+export interface EngineAction {
+  seq: number;
+  street: Street;
+  playerId: string;
+  type: EngineActionType;
+  /**
+   * Koľko žetónov akcia pridala do potu (0 pri fold, check a discard). Pri `uncalled` koľko žetónov sa hráčovi vrátilo z potu
+   * (nedorovnaná stávka) — pot sa o to zmenší.
+   */
+  amount: number;
+  /** Stávka hráča na tejto ulici po akcii (pri `uncalled` po vrátení). */
+  toAmount: number;
+  /** Pot tesne pred akciou (vrátane ante a mŕtvych peňazí). */
+  potBefore: number;
+  allin: boolean;
+  /** Akciu vykonal server za hráča (vypršaný čas, pauza, vyhodenie hostom). */
+  auto: boolean;
+}
+
 export class HandEngine {
   readonly handNumber: number;
   readonly rules: HandRules;
@@ -93,6 +118,9 @@ export class HandEngine {
   private deck: Card[];
   private discardPhaseDone = false;
   private pendingLog: EngineLog[] = [];
+  /** Všetky akcie tejto ruky v poradí, v akom sa stali (nikdy sa nemažú, kým ruka existuje). */
+  readonly actions: EngineAction[] = [];
+  private autoMode = false;
   private readonly money: (cents: number) => string;
 
   constructor(input: HandInput) {
@@ -265,6 +293,7 @@ export class HandEngine {
 
     switch (action.type) {
       case 'fold':
+        this.record(player, 'fold', 0);
         player.status = 'folded';
         player.hasActed = true;
         player.lastAction = 'Fold';
@@ -274,6 +303,7 @@ export class HandEngine {
         if (toCall > 0) {
           return { ok: false, error: 'Nemôžeš checkovať, treba dorovnať' };
         }
+        this.record(player, 'check', 0);
         player.hasActed = true;
         player.lastAction = 'Check';
         this.log(`${player.name}: check`, 'action', player.id);
@@ -312,8 +342,11 @@ export class HandEngine {
       return false;
     }
     if (this.toAct === player && this.street !== 'discard' && !this.awaitingRunout) {
-      return this.act(playerId, { type: 'fold' }).ok;
+      return this.withAuto(() => this.act(playerId, { type: 'fold' })).ok;
     }
+    this.autoMode = true;
+    this.record(player, 'fold', 0);
+    this.autoMode = false;
     player.status = 'folded';
     player.hasActed = true;
     player.lastAction = 'Fold';
@@ -355,6 +388,7 @@ export class HandEngine {
     if (!Number.isInteger(cardIndex) || cardIndex < 0 || cardIndex >= player.hole.length) {
       return { ok: false, error: 'Neplatná karta' };
     }
+    this.record(player, 'discard', 0);
     player.hole.splice(cardIndex, 1);
     player.discarded = true;
     this.log(`${player.name} zahadzuje kartu`, 'action', player.id);
@@ -381,7 +415,7 @@ export class HandEngine {
     if (this.street !== 'discard' || !player || player.status === 'folded' || player.discarded) {
       return { ok: false, error: 'Teraz sa nezahadzuje' };
     }
-    return this.discard(playerId, random(player.hole.length));
+    return this.withAuto(() => this.discard(playerId, random(player.hole.length)));
   }
 
   /** Všetkým, čo ešte nezahodili, zahodí náhodnú kartu (pozri `autoDiscard`). */
@@ -397,7 +431,31 @@ export class HandEngine {
       return;
     }
     const canCheck = this.currentBet - player.bet <= 0;
-    this.act(player.id, { type: canCheck ? 'check' : 'fold' });
+    this.withAuto(() => this.act(player.id, { type: canCheck ? 'check' : 'fold' }));
+  }
+
+  private withAuto<T>(run: () => T): T {
+    const previous = this.autoMode;
+    this.autoMode = true;
+    try {
+      return run();
+    } finally {
+      this.autoMode = previous;
+    }
+  }
+
+  private record(player: EnginePlayer, type: EngineActionType, amount: number): void {
+    this.actions.push({
+      seq: this.actions.length + 1,
+      street: this.street,
+      playerId: player.id,
+      type,
+      amount,
+      toAmount: player.bet + amount,
+      potBefore: this.totalPot,
+      allin: amount > 0 && amount >= player.stack,
+      auto: this.autoMode,
+    });
   }
 
   /**
@@ -455,6 +513,7 @@ export class HandEngine {
 
   private call(player: EnginePlayer): void {
     const amount = Math.min(this.currentBet - player.bet, player.stack);
+    this.record(player, 'call', amount);
     this.commit(player, amount);
     player.hasActed = true;
     player.lastAction = player.status === 'allin' ? `All-in ${this.money(player.bet)}` : `Call ${this.money(amount)}`;
@@ -491,6 +550,7 @@ export class HandEngine {
     }
 
     const wasOpen = this.currentBet === 0;
+    this.record(player, wasOpen ? 'bet' : 'raise', target - player.bet);
     this.commit(player, target - player.bet);
     player.hasActed = true;
     const fullRaise = raiseSize >= this.lastRaiseSize;
@@ -641,6 +701,17 @@ export class HandEngine {
     if (!player) {
       return;
     }
+    this.actions.push({
+      seq: this.actions.length + 1,
+      street: this.street,
+      playerId: player.id,
+      type: 'uncalled',
+      amount: uncalled.amount,
+      toAmount: Math.max(0, player.bet - uncalled.amount),
+      potBefore: this.totalPot,
+      allin: false,
+      auto: this.autoMode,
+    });
     player.total -= uncalled.amount;
     player.bet = Math.max(0, player.bet - uncalled.amount);
     player.stack += uncalled.amount;
@@ -760,6 +831,7 @@ export class HandEngine {
 
   private postBlind(player: EnginePlayer, amount: number, label: string): void {
     const posted = Math.min(amount, player.stack);
+    this.record(player, label === 'SB' ? 'sb' : 'bb', posted);
     this.commit(player, posted);
     player.lastAction = `${label} ${this.money(posted)}`;
     this.log(`${player.name} dáva ${label} ${this.money(posted)}`, 'action', player.id);
@@ -768,6 +840,7 @@ export class HandEngine {
   /** Zmeškané blindy pri návrate: živý BB ako stávka, mŕtvy SB rovno do potu (najprv živá časť, potom mŕtva). */
   private postReturn(player: EnginePlayer, post: { live: number; dead: number }): void {
     const live = Math.min(post.live, player.stack);
+    this.record(player, 'return-blind', live);
     this.commit(player, live);
     const dead = Math.min(post.dead, player.stack);
     player.stack -= dead;

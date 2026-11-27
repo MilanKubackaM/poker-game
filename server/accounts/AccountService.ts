@@ -3,12 +3,12 @@ import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:f
 import path from 'node:path';
 import { ACCEPTED_AVATAR_EMOJIS, AVATAR_COLORS } from '../../shared/constants';
 import type { Ack, Avatar } from '../../shared/types';
-import { PHOTO_MAX_BYTES, PHOTO_MIME_TYPES, RESET_TOKEN_TTL_MS, SESSION_TTL_MS, VERIFY_TOKEN_TTL_MS, aggregateStats, cleanEmail, cleanUsername, usernameKey, validateEmail, validatePassword, validateUsername, type AccountStats, type AccountTableStat, type AccountView, type AuthSession } from '../../shared/account';
+import { COACH_SESSION_TTL_MS, PHOTO_MAX_BYTES, PHOTO_MIME_TYPES, RESET_TOKEN_TTL_MS, SESSION_TTL_MS, VERIFY_TOKEN_TTL_MS, aggregateStats, cleanEmail, cleanUsername, usernameKey, validateEmail, validatePassword, validateUsername, type AccountStats, type AccountTableStat, type AccountView, type AuthSession } from '../../shared/account';
 import { LIMITS, WINDOWS, WindowCounter } from '../limits';
 import type { AccountDirectory, AccountProfile } from './directory';
 import { OutboxMailer, type Mailer } from './Mailer';
 import { SCRYPT_DEFAULTS, hashPassword, hashToken, isTokenShape, randomToken, verifyPassword } from './password';
-import { MAX_SESSIONS, UserStore, type OneTimeToken, type UserPhoto, type UserRecord } from './UserStore';
+import { MAX_COACH_SESSIONS, MAX_SESSIONS, UserStore, type OneTimeToken, type UserPhoto, type UserRecord, type UserSession } from './UserStore';
 
 export interface AccountServiceOptions {
   /** Priečinok dát (`users.json`, `photos/`); null = len v pamäti (testy). */
@@ -40,6 +40,17 @@ export const ACCOUNT_ERRORS = {
 /** Sliding session: `lastSeenAt` sa zapisuje najviac raz za hodinu. */
 const SESSION_TOUCH_MS = WINDOWS.HOUR;
 const PHOTO_FILE_PATTERN = /^([0-9a-f-]{36})\.(webp|jpg)$/;
+
+type SessionScope = 'full' | 'coach';
+
+/** Chýbajúci `scope` = bežné prihlásenie, takže staré záznamy nikdy nezískajú coach práva ani ich nestratia. */
+function sessionScope(session: UserSession): SessionScope {
+  return session.scope === 'coach' ? 'coach' : 'full';
+}
+
+function sessionTtl(session: UserSession): number {
+  return sessionScope(session) === 'coach' ? COACH_SESSION_TTL_MS : SESSION_TTL_MS;
+}
 
 function fail<T>(error: string): Ack<T> {
   return { ok: false, error };
@@ -160,6 +171,15 @@ export class AccountService implements AccountDirectory {
 
   /** `login` obsahuje @ → e-mail, inak hráčske meno (bez ohľadu na veľkosť písmen). */
   async login(login: unknown, password: unknown, ip = 'unknown'): Promise<Ack<AuthSession>> {
+    return this.loginWith(login, password, ip, 'full');
+  }
+
+  /** Prihlásenie pomocnej aplikácie: rovnaké overenie a limity ako `login`, token však platí len pre coach API. */
+  async coachLogin(login: unknown, password: unknown, ip = 'unknown'): Promise<Ack<AuthSession>> {
+    return this.loginWith(login, password, ip, 'coach');
+  }
+
+  private async loginWith(login: unknown, password: unknown, ip: string, scope: SessionScope): Promise<Ack<AuthSession>> {
     const loginText = str(login).trim();
     const passwordText = str(password);
     if (!loginText || !passwordText) {
@@ -186,20 +206,38 @@ export class AccountService implements AccountDirectory {
       this.loginFailuresPerAccount.add(accountKey, this.now());
       return fail(ACCOUNT_ERRORS.invalidLogin);
     }
-    const token = this.addSession(current);
+    const token = this.addSession(current, scope);
     this.store.update(current, true);
     return { ok: true, data: { token, account: this.viewOf(current) } };
   }
 
-  /** Profil prihláseného účtu podľa tokenu, alebo undefined (neplatný / expirovaný / odhlásený). */
+  /** Profil prihláseného účtu podľa bežného tokenu, alebo undefined (neplatný / expirovaný / odhlásený / coach token). */
   authenticate(token: unknown): AccountProfile | undefined {
-    const user = this.userForSession(token);
+    const user = this.userForSession(token, 'full');
     return user && this.profileOf(user);
+  }
+
+  /** Profil účtu podľa coach tokenu; bežný token tu neprejde. */
+  authenticateCoach(token: unknown): AccountProfile | undefined {
+    const user = this.userForSession(token, 'coach');
+    return user && this.profileOf(user);
+  }
+
+  /** Zruší coach prihlásenie; vráti id účtu, ak token platil. */
+  logoutCoach(token: unknown): string | undefined {
+    const user = this.userForSession(token, 'coach');
+    if (!user) {
+      return undefined;
+    }
+    const hash = hashToken(token as string);
+    user.sessions = user.sessions.filter((session) => session.hash !== hash);
+    this.store.update(user, true);
+    return user.id;
   }
 
   /** Zruší prihlásenie; vráti id účtu, ak token platil. */
   logout(token: unknown): string | undefined {
-    const user = this.userForSession(token);
+    const user = this.userForSession(token, 'full');
     if (!user) {
       return undefined;
     }
@@ -591,13 +629,15 @@ export class AccountService implements AccountDirectory {
     return this.dummyHash;
   }
 
-  private addSession(user: UserRecord): string {
+  private addSession(user: UserRecord, scope: SessionScope = 'full'): string {
     const token = randomToken();
     const now = this.now();
-    user.sessions.push({ hash: hashToken(token), createdAt: now, lastSeenAt: now });
-    if (user.sessions.length > MAX_SESSIONS) {
-      user.sessions.sort((a, b) => a.lastSeenAt - b.lastSeenAt);
-      user.sessions.splice(0, user.sessions.length - MAX_SESSIONS);
+    user.sessions.push({ hash: hashToken(token), createdAt: now, lastSeenAt: now, ...(scope === 'coach' ? { scope: 'coach' as const } : {}) });
+    const limit = scope === 'coach' ? MAX_COACH_SESSIONS : MAX_SESSIONS;
+    const same = user.sessions.filter((session) => sessionScope(session) === scope).sort((a, b) => a.lastSeenAt - b.lastSeenAt);
+    const surplus = new Set(same.slice(0, Math.max(0, same.length - limit)));
+    if (surplus.size > 0) {
+      user.sessions = user.sessions.filter((session) => !surplus.has(session));
     }
     return token;
   }
@@ -613,18 +653,18 @@ export class AccountService implements AccountDirectory {
   }
 
   /** Účet platného prihlásenia; expirované prihlásenie zahodí, živé posunie (sliding, najviac raz za hodinu). */
-  private userForSession(token: unknown): UserRecord | undefined {
+  private userForSession(token: unknown, scope: SessionScope): UserRecord | undefined {
     if (!isTokenShape(token)) {
       return undefined;
     }
     const hash = hashToken(token);
     const user = this.store.bySessionHash(hash);
     const session = user?.sessions.find((item) => item.hash === hash);
-    if (!user || !session) {
+    if (!user || !session || sessionScope(session) !== scope) {
       return undefined;
     }
     const now = this.now();
-    if (now - session.lastSeenAt > SESSION_TTL_MS) {
+    if (now - session.lastSeenAt > sessionTtl(session)) {
       user.sessions = user.sessions.filter((item) => item !== session);
       this.store.update(user);
       return undefined;
@@ -663,7 +703,7 @@ export class AccountService implements AccountDirectory {
   private pruneAll(): void {
     const now = this.now();
     for (const user of this.store.all()) {
-      const sessions = user.sessions.filter((session) => now - session.lastSeenAt <= SESSION_TTL_MS);
+      const sessions = user.sessions.filter((session) => now - session.lastSeenAt <= sessionTtl(session));
       const tokens = user.tokens.filter((token) => token.expiresAt > now);
       if (sessions.length !== user.sessions.length || tokens.length !== user.tokens.length) {
         user.sessions = sessions;
